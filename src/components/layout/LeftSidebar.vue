@@ -1,15 +1,16 @@
 <script setup lang="ts">
-type ConnectionStatus = 'disconnected' | 'searching' | 'connected'
+import { useDeviceDiscovery } from '../../composables/useDeviceDiscovery'
 
 defineProps<{
-  status: ConnectionStatus
-  deviceName: string
   selectedAlbum: string
 }>()
 
 const emit = defineEmits<{
   selectAlbum: [album: string]
 }>()
+
+const { devices, status, activeDeviceId, activeDevice, error, refresh, selectDevice } =
+  useDeviceDiscovery()
 
 const albums: readonly string[] = ['Camera Roll', 'Favorites', 'Screenshots', 'Videos']
 </script>
@@ -26,8 +27,13 @@ const albums: readonly string[] = ['Camera Roll', 'Favorites', 'Screenshots', 'V
     </div>
 
     <div class="min-h-0 flex-1 overflow-y-auto p-3">
-      <!-- Loading -->
-      <div v-if="status === 'searching'" class="space-y-2" aria-busy="true" aria-live="polite">
+      <!-- Loading (first search, nothing known yet) -->
+      <div
+        v-if="status === 'searching' && devices.length === 0"
+        class="space-y-2"
+        aria-busy="true"
+        aria-live="polite"
+      >
         <div class="h-8 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
         <div class="ml-4 space-y-2">
           <div
@@ -41,9 +47,41 @@ const albums: readonly string[] = ['Camera Roll', 'Favorites', 'Screenshots', 'V
         </p>
       </div>
 
+      <!-- Error -->
+      <div
+        v-else-if="status === 'error'"
+        class="flex h-full flex-col items-center justify-center px-2 text-center"
+        role="alert"
+      >
+        <svg
+          class="mb-3 h-10 w-10 text-red-500"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 8v4M12 16h.01" />
+        </svg>
+        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Device search failed</p>
+        <p class="mt-1 break-words text-xs text-zinc-500 dark:text-zinc-400">
+          {{ error ?? 'Unknown error' }}
+        </p>
+        <button
+          type="button"
+          class="mt-3 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+          @click="refresh"
+        >
+          Try again
+        </button>
+      </div>
+
       <!-- Empty -->
       <div
-        v-else-if="status === 'disconnected'"
+        v-else-if="devices.length === 0"
         class="flex h-full flex-col items-center justify-center px-4 text-center"
       >
         <svg
@@ -59,63 +97,111 @@ const albums: readonly string[] = ['Camera Roll', 'Favorites', 'Screenshots', 'V
           <rect x="7" y="2" width="10" height="20" rx="2" />
           <path d="M11 18h2" />
         </svg>
-        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">No device connected</p>
+        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">No device found</p>
         <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          Connect your phone to browse its albums.
+          Make sure your phone is on the same Wi-Fi network.
         </p>
+        <button
+          type="button"
+          class="mt-3 rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          @click="refresh"
+        >
+          Search again
+        </button>
       </div>
 
-      <!-- Connected: album tree -->
-      <nav v-else aria-label="Albums">
-        <div
-          class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100"
-        >
-          <svg
-            class="h-4 w-4 text-zinc-500 dark:text-zinc-400"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
+      <!-- Devices + album tree -->
+      <div v-else class="space-y-4">
+        <section aria-label="Devices">
+          <p
+            v-if="status === 'searching'"
+            class="mb-1 px-2 text-xs text-zinc-500 dark:text-zinc-400"
+            aria-live="polite"
           >
-            <rect x="7" y="2" width="10" height="20" rx="2" />
-            <path d="M11 18h2" />
-          </svg>
-          <span class="truncate">{{ deviceName }}</span>
-        </div>
-
-        <ul class="ml-4 mt-1 space-y-0.5 border-l border-zinc-200 pl-2 dark:border-zinc-800">
-          <li v-for="album in albums" :key="album">
-            <button
-              type="button"
-              class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-              :class="
-                album === selectedAlbum
-                  ? 'bg-blue-500/10 font-medium text-blue-700 dark:text-blue-300'
-                  : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'
-              "
-              :aria-current="album === selectedAlbum ? 'true' : undefined"
-              @click="emit('selectAlbum', album)"
-            >
-              <svg
-                class="h-4 w-4 shrink-0"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
+            Searching…
+          </p>
+          <ul class="space-y-0.5">
+            <li v-for="device in devices" :key="device.id">
+              <button
+                type="button"
+                class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                :class="
+                  device.id === activeDeviceId
+                    ? 'bg-blue-500/10 font-medium text-blue-700 dark:text-blue-300'
+                    : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'
+                "
+                :aria-current="device.id === activeDeviceId ? 'true' : undefined"
+                :title="device.ip ? `${device.name} (${device.ip})` : device.name"
+                @click="selectDevice(device.id)"
               >
-                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-              </svg>
-              <span class="truncate">{{ album }}</span>
-            </button>
-          </li>
-        </ul>
-      </nav>
+                <svg
+                  class="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="7" y="2" width="10" height="20" rx="2" />
+                  <path d="M11 18h2" />
+                </svg>
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate">{{ device.name }}</span>
+                  <span
+                    v-if="device.ip"
+                    class="block truncate text-xs font-normal text-zinc-500 dark:text-zinc-400"
+                  >
+                    {{ device.ip }}
+                  </span>
+                </span>
+              </button>
+            </li>
+          </ul>
+        </section>
+
+        <nav
+          v-if="activeDevice"
+          class="border-t border-zinc-200 pt-3 dark:border-zinc-800"
+          aria-label="Albums"
+        >
+          <p
+            class="mb-1 truncate px-2 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
+          >
+            Albums · {{ activeDevice.name }}
+          </p>
+          <ul class="ml-2 space-y-0.5 border-l border-zinc-200 pl-2 dark:border-zinc-800">
+            <li v-for="album in albums" :key="album">
+              <button
+                type="button"
+                class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                :class="
+                  album === selectedAlbum
+                    ? 'bg-blue-500/10 font-medium text-blue-700 dark:text-blue-300'
+                    : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'
+                "
+                :aria-current="album === selectedAlbum ? 'true' : undefined"
+                @click="emit('selectAlbum', album)"
+              >
+                <svg
+                  class="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                </svg>
+                <span class="truncate">{{ album }}</span>
+              </button>
+            </li>
+          </ul>
+        </nav>
+      </div>
     </div>
   </aside>
 </template>

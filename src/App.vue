@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import BottomBar from './components/layout/BottomBar.vue'
 import LeftSidebar from './components/layout/LeftSidebar.vue'
 import RightSidebar from './components/layout/RightSidebar.vue'
 import TopBar from './components/layout/TopBar.vue'
 import PhotoGrid from './components/photos/PhotoGrid.vue'
+import { useDeviceDiscovery } from './composables/useDeviceDiscovery'
 
 type ConnectionStatus = 'disconnected' | 'searching' | 'connected'
 
@@ -15,11 +16,22 @@ interface TransferProgress {
   etaSeconds: number
 }
 
-const STATUS_ORDER: readonly ConnectionStatus[] = ['connected', 'searching', 'disconnected']
-const DEVICE_NAME = 'iPhone 15'
+const { status: deviceStatus, devices, refresh } = useDeviceDiscovery()
+
+// The layout components use a three-state view of the device store's status.
+// A refresh while devices are already known keeps showing them as connected.
+const status = computed<ConnectionStatus>(() => {
+  switch (deviceStatus.value) {
+    case 'connected':
+      return 'connected'
+    case 'searching':
+      return devices.value.length > 0 ? 'connected' : 'searching'
+    default:
+      return 'disconnected'
+  }
+})
 
 const isDark = ref(true)
-const status = ref<ConnectionStatus>('connected')
 const selectedAlbum = ref('Camera Roll')
 const selectedIds = ref<string[]>([])
 const progress = ref<TransferProgress | null>(null)
@@ -55,11 +67,6 @@ function toggleTheme(): void {
   isDark.value = !isDark.value
 }
 
-function cycleStatus(): void {
-  const next = (STATUS_ORDER.indexOf(status.value) + 1) % STATUS_ORDER.length
-  status.value = STATUS_ORDER[next] ?? 'disconnected'
-}
-
 function toggleTile(id: string): void {
   selectedIds.value = selectedIds.value.includes(id)
     ? selectedIds.value.filter((existing) => existing !== id)
@@ -86,6 +93,8 @@ function startTransfer(): void {
   }, 2000)
 }
 
+onMounted(refresh)
+
 onBeforeUnmount(stopProgress)
 </script>
 
@@ -93,18 +102,10 @@ onBeforeUnmount(stopProgress)
   <div
     class="flex h-screen flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100"
   >
-    <TopBar
-      :status="status"
-      :device-name="DEVICE_NAME"
-      :is-dark="isDark"
-      @cycle-status="cycleStatus"
-      @toggle-theme="toggleTheme"
-    />
+    <TopBar :is-dark="isDark" @toggle-theme="toggleTheme" />
 
     <main class="flex min-h-0 flex-1">
       <LeftSidebar
-        :status="status"
-        :device-name="DEVICE_NAME"
         :selected-album="selectedAlbum"
         @select-album="selectedAlbum = $event"
       />

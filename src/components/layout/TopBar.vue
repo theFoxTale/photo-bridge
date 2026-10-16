@@ -1,21 +1,19 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useDeviceDiscovery } from '../../composables/useDeviceDiscovery'
 
-type ConnectionStatus = 'disconnected' | 'searching' | 'connected'
-
-const props = defineProps<{
-  status: ConnectionStatus
-  deviceName: string
+defineProps<{
   isDark: boolean
 }>()
 
 const emit = defineEmits<{
-  cycleStatus: []
   toggleTheme: []
 }>()
 
+const { status, activeDevice, error, refresh, stopDiscovery } = useDeviceDiscovery()
+
 const pill = computed(() => {
-  switch (props.status) {
+  switch (status.value) {
     case 'searching':
       return {
         label: 'Searching',
@@ -25,7 +23,7 @@ const pill = computed(() => {
       }
     case 'connected':
       return {
-        label: `Connected: ${props.deviceName}`,
+        label: activeDevice.value ? `Connected: ${activeDevice.value.name}` : 'Connected',
         pill: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
         dot: 'bg-emerald-500',
         animate: '',
@@ -39,6 +37,20 @@ const pill = computed(() => {
       }
   }
 })
+
+const pillTitle = computed(() => {
+  if (status.value === 'searching') return 'Click to stop searching'
+  if (status.value === 'error' && error.value) return `Discovery failed: ${error.value}. Click to retry.`
+  return 'Click to search for devices'
+})
+
+async function onPillClick(): Promise<void> {
+  if (status.value === 'searching') {
+    await stopDiscovery()
+    return
+  }
+  await refresh()
+}
 </script>
 
 <template>
@@ -70,9 +82,9 @@ const pill = computed(() => {
         type="button"
         class="flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
         :class="pill.pill"
-        title="Click to preview the next connection state"
-        :aria-label="`Connection status: ${pill.label}. Click to preview the next state.`"
-        @click="emit('cycleStatus')"
+        :title="pillTitle"
+        :aria-label="`Connection status: ${pill.label}. ${pillTitle}`"
+        @click="onPillClick"
       >
         <span class="h-2 w-2 rounded-full" :class="pill.dot" />
         <span :class="pill.animate">{{ pill.label }}</span>
