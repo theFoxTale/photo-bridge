@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { usePhotoLibrary } from '../../composables/usePhotoLibrary'
 
 type TransferFormat = 'original' | 'jpg' | 'both'
 
 const props = defineProps<{
-  selectedCount: number
   busy: boolean
 }>()
+
+const { selectedIds } = usePhotoLibrary()
+const selectedCount = computed(() => selectedIds.value.size)
 
 const emit = defineEmits<{
   transfer: [payload: { destination: string; format: TransferFormat; quality: number }]
@@ -24,7 +27,7 @@ const quality = ref(95)
 const destinationError = ref<string | null>(null)
 
 const qualityEnabled = computed(() => format.value !== 'original')
-const canTransfer = computed(() => props.selectedCount > 0 && !props.busy)
+const canTransfer = computed(() => selectedIds.value.size > 0 && !props.busy)
 
 watch(destination, () => {
   destinationError.value = null
@@ -134,7 +137,7 @@ function onTransfer(): void {
           :disabled="!canTransfer"
           class="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400 dark:focus-visible:ring-offset-zinc-900 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500"
         >
-          Transfer Selected
+          Transfer Selected{{ selectedCount > 0 ? ` (${selectedCount})` : '' }}
         </button>
       </div>
     </form>

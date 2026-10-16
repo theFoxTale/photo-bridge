@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"sync"
+
+	"photo-bridge/backend"
 )
 
 // App is the struct bound to the frontend by Wails. Every exported method is
@@ -13,11 +15,24 @@ type App struct {
 	mu              sync.Mutex
 	discoveryCancel context.CancelFunc
 	discoveryToken  uint64
+
+	library backend.Library
 }
 
 // NewApp creates the application struct.
 func NewApp() *App {
-	return &App{}
+	return &App{library: backend.NewLibrary()}
+}
+
+// runtimeContext returns the Wails runtime context, or a background context
+// when startup has not run (for example in tests).
+func (a *App) runtimeContext() context.Context {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.ctx == nil {
+		return context.Background()
+	}
+	return a.ctx
 }
 
 // startup stores the Wails runtime context. It is not exported, so it is not

@@ -6,6 +6,18 @@ export function DiscoverDevices() {
   return window['go']['main']['App']['DiscoverDevices']();
 }
 
+export function FetchAlbums(arg1) {
+  return window['go']['main']['App']['FetchAlbums'](arg1);
+}
+
+export function FetchPhotos(arg1, arg2) {
+  return window['go']['main']['App']['FetchPhotos'](arg1, arg2);
+}
+
+export function FetchThumbnail(arg1, arg2) {
+  return window['go']['main']['App']['FetchThumbnail'](arg1, arg2);
+}
+
 export function StopDiscovery() {
   return window['go']['main']['App']['StopDiscovery']();
 }

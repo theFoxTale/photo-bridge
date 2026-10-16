@@ -1,18 +1,15 @@
 <script setup lang="ts">
 import { useDeviceDiscovery } from '../../composables/useDeviceDiscovery'
-
-defineProps<{
-  selectedAlbum: string
-}>()
-
-const emit = defineEmits<{
-  selectAlbum: [album: string]
-}>()
+import { usePhotoLibrary } from '../../composables/usePhotoLibrary'
 
 const { devices, status, activeDeviceId, activeDevice, error, refresh, selectDevice } =
   useDeviceDiscovery()
-
-const albums: readonly string[] = ['Camera Roll', 'Favorites', 'Screenshots', 'Videos']
+const {
+  albums,
+  activeAlbumId,
+  isLoading: isLoadingLibrary,
+  selectAlbum,
+} = usePhotoLibrary()
 </script>
 
 <template>
@@ -171,18 +168,35 @@ const albums: readonly string[] = ['Camera Roll', 'Favorites', 'Screenshots', 'V
           >
             Albums · {{ activeDevice.name }}
           </p>
-          <ul class="ml-2 space-y-0.5 border-l border-zinc-200 pl-2 dark:border-zinc-800">
-            <li v-for="album in albums" :key="album">
+          <div
+            v-if="albums.length === 0 && isLoadingLibrary"
+            class="ml-2 space-y-2 border-l border-zinc-200 pl-2 dark:border-zinc-800"
+            aria-busy="true"
+          >
+            <div
+              v-for="n in 3"
+              :key="n"
+              class="h-7 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800"
+            />
+          </div>
+          <p
+            v-else-if="albums.length === 0"
+            class="ml-2 border-l border-zinc-200 px-2 py-1.5 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400"
+          >
+            No albums
+          </p>
+          <ul v-else class="ml-2 space-y-0.5 border-l border-zinc-200 pl-2 dark:border-zinc-800">
+            <li v-for="album in albums" :key="album.id">
               <button
                 type="button"
                 class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 :class="
-                  album === selectedAlbum
+                  album.id === activeAlbumId
                     ? 'bg-blue-500/10 font-medium text-blue-700 dark:text-blue-300'
                     : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'
                 "
-                :aria-current="album === selectedAlbum ? 'true' : undefined"
-                @click="emit('selectAlbum', album)"
+                :aria-current="album.id === activeAlbumId ? 'true' : undefined"
+                @click="selectAlbum(album.id)"
               >
                 <svg
                   class="h-4 w-4 shrink-0"
@@ -196,7 +210,10 @@ const albums: readonly string[] = ['Camera Roll', 'Favorites', 'Screenshots', 'V
                 >
                   <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
                 </svg>
-                <span class="truncate">{{ album }}</span>
+                <span class="min-w-0 flex-1 truncate">{{ album.name }}</span>
+                <span class="shrink-0 text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
+                  {{ album.count }}
+                </span>
               </button>
             </li>
           </ul>

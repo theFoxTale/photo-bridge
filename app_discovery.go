@@ -36,7 +36,7 @@ func (a *App) DiscoverDevices() ([]backend.Device, error) {
 		a.mu.Unlock()
 	}()
 
-	devices, err := backend.BrowseDevices(ctx)
+	devices, err := backend.Discover(ctx)
 	if err != nil {
 		return []backend.Device{}, fmt.Errorf("discover devices: %w", err)
 	}
