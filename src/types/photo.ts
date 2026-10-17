@@ -1,4 +1,4 @@
-export type PhotoFormat = 'heic' | 'jpeg' | 'dng' | 'png'
+export type PhotoFormat = 'heic' | 'jpeg' | 'dng' | 'png' | 'mov'
 
 /** Mirrors the Go `backend.Photo` struct (see backend/photos.go). */
 export interface Photo {

@@ -27,17 +27,30 @@ export const useDeviceStore = defineStore('device', () => {
   // Incremented whenever a run is started or cancelled, so a late response
   // from a superseded `DiscoverDevices` call can be recognised and ignored.
   let runId = 0
+  // True while a silent (background) poll is in flight.
+  let polling = false
 
   const activeDevice = computed<Device | null>(
     () => devices.value.find((device) => device.id === activeDeviceId.value) ?? null,
   )
 
-  async function startDiscovery(): Promise<void> {
+  /**
+   * Searches for devices. A `silent` run is a background poll: it does not
+   * switch the status to 'searching', so the UI does not flicker, and it is
+   * skipped while another search is running.
+   */
+  async function startDiscovery(options: { silent?: boolean } = {}): Promise<void> {
+    const silent = options.silent === true
     if (status.value === 'searching') return
+    if (silent && polling) return
 
     const currentRun = ++runId
-    status.value = 'searching'
-    error.value = null
+    if (silent) {
+      polling = true
+    } else {
+      status.value = 'searching'
+      error.value = null
+    }
 
     try {
       const found = await getApi().DiscoverDevices()
@@ -50,8 +63,13 @@ export const useDeviceStore = defineStore('device', () => {
       status.value = found.length > 0 ? 'connected' : 'idle'
     } catch (err) {
       if (currentRun !== runId) return
+      // Without a working device list nothing can be trusted any more.
+      devices.value = []
+      activeDeviceId.value = null
       error.value = toMessage(err)
       status.value = 'error'
+    } finally {
+      if (silent) polling = false
     }
   }
 

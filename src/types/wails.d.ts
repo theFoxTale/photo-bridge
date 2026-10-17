@@ -15,6 +15,7 @@ declare global {
         App?: {
           DiscoverDevices(): Promise<Device[]>
           StopDiscovery(): Promise<void>
+          LibraryMode(): Promise<'device' | 'mock'>
           FetchAlbums(deviceId: string): Promise<Album[]>
           FetchPhotos(deviceId: string, albumId: string): Promise<Photo[]>
           FetchThumbnail(deviceId: string, photoId: string): Promise<string>

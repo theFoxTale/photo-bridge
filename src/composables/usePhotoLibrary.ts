@@ -16,8 +16,17 @@ interface PhotoLibraryOptions {
 export function usePhotoLibrary(options: PhotoLibraryOptions = {}) {
   const store = usePhotoStore()
   const { activeDeviceId } = useDeviceDiscovery()
-  const { albums, photos, selectedIds, activeAlbumId, isLoading, error, selectedCount } =
-    storeToRefs(store)
+  const {
+    albums,
+    photos,
+    selectedIds,
+    activeAlbumId,
+    isLoading,
+    error,
+    selectedCount,
+    isDemoMode,
+    disconnected,
+  } = storeToRefs(store)
 
   /** Loads the albums of a device and then the photos of its first album. */
   async function loadLibrary(deviceId: string | null): Promise<void> {
@@ -57,6 +66,8 @@ export function usePhotoLibrary(options: PhotoLibraryOptions = {}) {
     activeAlbumId,
     isLoading,
     error,
+    isDemoMode,
+    disconnected,
     reload,
     selectAlbum,
     toggleSelection: store.toggleSelection,

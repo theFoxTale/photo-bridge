@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"sync"
 
 	"photo-bridge/backend"
@@ -43,12 +45,19 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 }
 
-// shutdown cancels any in-flight work when the window closes.
+// shutdown cancels any in-flight work and closes device connections when the
+// window closes.
 func (a *App) shutdown(_ context.Context) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.discoveryCancel != nil {
 		a.discoveryCancel()
 		a.discoveryCancel = nil
+	}
+	a.mu.Unlock()
+
+	if closer, ok := a.library.(io.Closer); ok {
+		if err := closer.Close(); err != nil {
+			slog.Debug("closing photo library failed", "error", err)
+		}
 	}
 }

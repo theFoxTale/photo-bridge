@@ -15,7 +15,9 @@ interface TransferProgress {
   etaSeconds: number
 }
 
-const { activeDeviceId, refresh } = useDeviceDiscovery()
+const POLL_INTERVAL_MS = 15_000
+
+const { store: deviceStore, activeDeviceId, refresh } = useDeviceDiscovery()
 // The only place that enables auto-sync: it loads the library for the active device.
 const { selectedIds } = usePhotoLibrary({ autoSync: true })
 
@@ -72,9 +74,23 @@ function startTransfer(): void {
   }, 2000)
 }
 
-onMounted(refresh)
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
-onBeforeUnmount(stopProgress)
+onMounted(() => {
+  void refresh()
+  // Background polling notices a phone being plugged in or removed.
+  pollTimer = setInterval(() => {
+    void deviceStore.startDiscovery({ silent: true })
+  }, POLL_INTERVAL_MS)
+})
+
+onBeforeUnmount(() => {
+  if (pollTimer !== null) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+  stopProgress()
+})
 </script>
 
 <template>

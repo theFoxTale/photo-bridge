@@ -26,6 +26,12 @@ export const usePhotoStore = defineStore('photo', () => {
   const activeAlbumId = ref<string | null>(null)
   const error = ref<string | null>(null)
 
+  // Reported by the Go backend (build tag). `mock` means sample data.
+  const libraryMode = ref<'device' | 'mock' | null>(null)
+  const isDemoMode = computed(() => libraryMode.value === 'mock')
+  // True after the active device vanished, until another device is loaded.
+  const disconnected = ref(false)
+
   const thumbnailCache = reactive(new Map<string, string>())
   const failedThumbnails = reactive(new Set<string>())
 
@@ -64,7 +70,19 @@ export const usePhotoStore = defineStore('photo', () => {
 
   /** Drops everything, for example when no device is active any more. */
   function reset(): void {
+    const hadDevice = currentDeviceId !== null
     resetForDevice(null)
+    disconnected.value = hadDevice
+  }
+
+  async function loadLibraryMode(): Promise<void> {
+    if (libraryMode.value !== null) return
+    try {
+      libraryMode.value = await getApi().LibraryMode()
+    } catch {
+      // Unknown mode: treat as a real device, the banner stays hidden.
+      libraryMode.value = 'device'
+    }
   }
 
   async function loadAlbums(deviceId: string): Promise<void> {
@@ -75,6 +93,8 @@ export const usePhotoStore = defineStore('photo', () => {
     if (deviceId !== currentDeviceId) {
       resetForDevice(deviceId)
     }
+    disconnected.value = false
+    void loadLibraryMode()
 
     const run = ++albumsRun
     pending.value++
@@ -180,6 +200,9 @@ export const usePhotoStore = defineStore('photo', () => {
     activeAlbumId,
     isLoading,
     error,
+    libraryMode,
+    isDemoMode,
+    disconnected,
     thumbnailCache,
     failedThumbnails,
     selectedCount,

@@ -10,4 +10,6 @@ export function FetchPhotos(arg1:string,arg2:string):Promise<Array<backend.Photo
 
 export function FetchThumbnail(arg1:string,arg2:string):Promise<string>;
 
+export function LibraryMode():Promise<string>;
+
 export function StopDiscovery():Promise<void>;

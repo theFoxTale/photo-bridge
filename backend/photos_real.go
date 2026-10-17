@@ -4,31 +4,58 @@ package backend
 
 import (
 	"context"
-	"errors"
+	"encoding/base64"
+	"fmt"
+	"net/http"
 )
 
-// ErrLibraryUnavailable is returned by every library call in builds without
-// the `mock` tag, because reading a real device's photo library is not
-// implemented yet.
-var ErrLibraryUnavailable = errors.New(
-	"reading photos from a real device is not implemented yet; build with `-tags mock` to use sample data",
-)
+// LibraryMode reports where photo data comes from in this build.
+func LibraryMode() string {
+	return "device"
+}
 
-type unavailableLibrary struct{}
+// deviceLibrary adapts a PhotoLibrary (no context, raw thumbnail bytes) to the
+// Library interface used by the App.
+type deviceLibrary struct {
+	src *AFCPhotoLibrary
+}
 
-// NewLibrary returns the library used by this build.
+// NewLibrary returns the library used by this build: real devices over AFC.
 func NewLibrary() Library {
-	return unavailableLibrary{}
+	return &deviceLibrary{src: NewAFCPhotoLibrary()}
 }
 
-func (unavailableLibrary) Albums(_ context.Context, _ string) ([]Album, error) {
-	return []Album{}, ErrLibraryUnavailable
+func (d *deviceLibrary) Albums(ctx context.Context, deviceID string) ([]Album, error) {
+	if err := ctx.Err(); err != nil {
+		return []Album{}, err
+	}
+	return d.src.FetchAlbums(deviceID)
 }
 
-func (unavailableLibrary) Photos(_ context.Context, _, _ string) ([]Photo, error) {
-	return []Photo{}, ErrLibraryUnavailable
+func (d *deviceLibrary) Photos(ctx context.Context, deviceID, albumID string) ([]Photo, error) {
+	if err := ctx.Err(); err != nil {
+		return []Photo{}, err
+	}
+	return d.src.FetchPhotos(deviceID, albumID)
 }
 
-func (unavailableLibrary) Thumbnail(_ context.Context, _, _ string) (string, error) {
-	return "", ErrLibraryUnavailable
+func (d *deviceLibrary) Thumbnail(ctx context.Context, deviceID, photoID string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	data, err := d.src.FetchThumbnail(deviceID, photoID)
+	if err != nil {
+		return "", err
+	}
+
+	mime := http.DetectContentType(data)
+	if mime != "image/jpeg" && mime != "image/png" {
+		return "", fmt.Errorf("preview not available for content type %s", mime)
+	}
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), nil
+}
+
+// Close closes the cached device connections.
+func (d *deviceLibrary) Close() error {
+	return d.src.Close()
 }

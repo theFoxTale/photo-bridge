@@ -18,6 +18,10 @@ export function FetchThumbnail(arg1, arg2) {
   return window['go']['main']['App']['FetchThumbnail'](arg1, arg2);
 }
 
+export function LibraryMode() {
+  return window['go']['main']['App']['LibraryMode']();
+}
+
 export function StopDiscovery() {
   return window['go']['main']['App']['StopDiscovery']();
 }

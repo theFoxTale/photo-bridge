@@ -15,7 +15,10 @@ const {
   activeAlbumId,
   isLoading,
   error,
+  isDemoMode,
+  disconnected,
   reload,
+  selectAlbum,
   toggleSelection,
   selectOnly,
   selectAll,
@@ -30,6 +33,16 @@ const albumName = computed(
 const isSearchingDevice = computed(
   () => activeDeviceId.value === null && status.value === 'searching',
 )
+
+// Retries loading the current album's photos; falls back to a full reload when
+// the albums themselves failed to load.
+function retry(): void {
+  if (activeAlbumId.value !== null) {
+    void selectAlbum(activeAlbumId.value)
+  } else {
+    void reload()
+  }
+}
 
 function thumbUrlFor(photo: Photo): string | null {
   return store.thumbnailCache.get(photo.id) ?? (photo.thumbUrl !== '' ? photo.thumbUrl : null)
@@ -75,6 +88,14 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
       </div>
     </div>
 
+    <div
+      v-if="isDemoMode"
+      class="shrink-0 border-b border-amber-500/30 bg-amber-500/10 px-4 py-1.5 text-center text-xs font-medium text-amber-700 dark:text-amber-300"
+      role="status"
+    >
+      Demo mode — showing sample photos
+    </div>
+
     <div class="min-h-0 flex-1 overflow-y-auto p-4">
       <!-- Loading -->
       <div
@@ -87,6 +108,31 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
           :key="n"
           class="aspect-square animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-800"
         />
+      </div>
+
+      <!-- Device disconnected -->
+      <div
+        v-else-if="activeDeviceId === null && disconnected"
+        class="flex h-full flex-col items-center justify-center text-center"
+        role="status"
+      >
+        <svg
+          class="mb-3 h-12 w-12 text-zinc-400 dark:text-zinc-600"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <rect x="7" y="2" width="10" height="20" rx="2" />
+          <path d="m3 3 18 18" />
+        </svg>
+        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Device disconnected</p>
+        <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+          Reconnect your phone; it is picked up automatically.
+        </p>
       </div>
 
       <!-- No device -->
@@ -140,9 +186,9 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
         <button
           type="button"
           class="mt-3 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-          @click="reload"
+          @click="retry"
         >
-          Try again
+          Retry
         </button>
       </div>
 

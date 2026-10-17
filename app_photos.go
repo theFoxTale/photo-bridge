@@ -14,6 +14,12 @@ func requireID(field, value string) error {
 	return nil
 }
 
+// LibraryMode reports where photo data comes from: "device" for a real
+// iPhone, "mock" in builds made with `-tags mock`.
+func (a *App) LibraryMode() string {
+	return backend.LibraryMode()
+}
+
 // FetchAlbums returns the albums of the given device. The result is an empty
 // slice (never nil) when the device has none.
 func (a *App) FetchAlbums(deviceID string) ([]backend.Album, error) {

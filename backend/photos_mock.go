@@ -41,6 +41,11 @@ type mockLibrary struct {
 	photos []Photo
 }
 
+// LibraryMode reports where photo data comes from in this build.
+func LibraryMode() string {
+	return "mock"
+}
+
 // NewLibrary returns the sample-data library used by `-tags mock` builds.
 func NewLibrary() Library {
 	return newMockLibrary()
