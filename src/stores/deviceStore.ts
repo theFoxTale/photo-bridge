@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { Device } from '../types/device'
 
-export type DeviceStatus = 'idle' | 'searching' | 'connected' | 'error'
+export type DeviceStatus = 'idle' | 'searching' | 'connected' | 'error' | 'blocked_by_apple'
 
 function getApi(): NonNullable<NonNullable<NonNullable<Window['go']>['main']>['App']> {
   const api = window.go?.main?.App
@@ -29,6 +29,8 @@ export const useDeviceStore = defineStore('device', () => {
   let runId = 0
   // True while a silent (background) poll is in flight.
   let polling = false
+  // The last status that was not 'searching'; restored when a search is stopped.
+  let settledStatus: DeviceStatus = 'idle'
 
   const activeDevice = computed<Device | null>(
     () => devices.value.find((device) => device.id === activeDeviceId.value) ?? null,
@@ -48,19 +50,27 @@ export const useDeviceStore = defineStore('device', () => {
     if (silent) {
       polling = true
     } else {
+      settledStatus = status.value
       status.value = 'searching'
       error.value = null
     }
 
     try {
-      const found = await getApi().DiscoverDevices()
+      const result = await getApi().DiscoverDevices()
       if (currentRun !== runId) return
 
+      const found = result.devices
       devices.value = found
       if (!found.some((device) => device.id === activeDeviceId.value)) {
         activeDeviceId.value = found[0]?.id ?? null
       }
-      status.value = found.length > 0 ? 'connected' : 'idle'
+      // Devices always win; otherwise the backend says whether the phone is
+      // visible on the network but hidden from Apple Devices.
+      if (found.length > 0) {
+        status.value = 'connected'
+      } else {
+        status.value = result.status === 'blocked_by_apple' ? 'blocked_by_apple' : 'idle'
+      }
     } catch (err) {
       if (currentRun !== runId) return
       // Without a working device list nothing can be trusted any more.
@@ -78,7 +88,11 @@ export const useDeviceStore = defineStore('device', () => {
 
     // Invalidate the in-flight run first so its result is dropped.
     runId++
-    status.value = devices.value.length > 0 ? 'connected' : 'idle'
+    if (devices.value.length > 0) {
+      status.value = 'connected'
+    } else {
+      status.value = settledStatus === 'connected' ? 'idle' : settledStatus
+    }
 
     try {
       await getApi().StopDiscovery()

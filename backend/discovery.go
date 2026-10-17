@@ -22,10 +22,30 @@ const (
 	// DiscoveryTimeout is how long a single discovery run lasts.
 	DiscoveryTimeout = 5 * time.Second
 
+	// MdnsDiagnosticsTimeout is how long the mDNS diagnostic browse lasts.
+	MdnsDiagnosticsTimeout = 2 * time.Second
+
 	// collectorGrace is how long to wait for the entry collector to finish
 	// after the browse context has ended.
 	collectorGrace = time.Second
 )
+
+// Values of DiscoveryResult.Status.
+const (
+	// StatusIdle: no device was found anywhere.
+	StatusIdle = "idle"
+	// StatusConnected: at least one device is visible to usbmuxd.
+	StatusConnected = "connected"
+	// StatusBlockedByApple: a device is visible on the network via mDNS, but
+	// usbmuxd (Apple Devices / iTunes) does not list any device.
+	StatusBlockedByApple = "blocked_by_apple"
+)
+
+// DiscoveryResult is what a device search reports to the frontend.
+type DiscoveryResult struct {
+	Devices []Device `json:"devices"`
+	Status  string   `json:"status"`
+}
 
 // Device describes a device found on the local network.
 type Device struct {

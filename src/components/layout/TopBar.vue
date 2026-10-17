@@ -21,6 +21,13 @@ const pill = computed(() => {
         dot: 'bg-amber-500 animate-pulse',
         animate: 'animate-pulse',
       }
+    case 'blocked_by_apple':
+      return {
+        label: 'Blocked by Apple Devices',
+        pill: 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+        dot: 'bg-amber-500',
+        animate: '',
+      }
     case 'connected':
       return {
         label: activeDevice.value ? `Connected: ${activeDevice.value.name}` : 'Connected',
@@ -40,6 +47,9 @@ const pill = computed(() => {
 
 const pillTitle = computed(() => {
   if (status.value === 'searching') return 'Click to stop searching'
+  if (status.value === 'blocked_by_apple') {
+    return 'iPhone found on Wi-Fi, but Apple Devices cannot see it. Click to retry.'
+  }
   if (status.value === 'error' && error.value) return `Discovery failed: ${error.value}. Click to retry.`
   return 'Click to search for devices'
 })

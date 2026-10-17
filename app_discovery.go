@@ -7,11 +7,12 @@ import (
 	"photo-bridge/backend"
 )
 
-// DiscoverDevices browses the local network for iOS devices for up to
-// backend.DiscoveryTimeout and returns what it found. The result is an empty
-// slice (never nil) when nothing is found. If a discovery run is already in
+// DiscoverDevices searches for iOS devices for up to backend.DiscoveryTimeout.
+// The result holds the devices (an empty slice, never nil, when none) and a
+// status: "connected", "idle", or "blocked_by_apple" when usbmuxd sees nothing
+// but a phone is visible on the network. If a discovery run is already in
 // flight it is cancelled and replaced by this one.
-func (a *App) DiscoverDevices() ([]backend.Device, error) {
+func (a *App) DiscoverDevices() (backend.DiscoveryResult, error) {
 	a.mu.Lock()
 	parent := a.ctx
 	if parent == nil {
@@ -36,11 +37,26 @@ func (a *App) DiscoverDevices() ([]backend.Device, error) {
 		a.mu.Unlock()
 	}()
 
-	devices, err := backend.Discover(ctx)
+	result, err := backend.Discover(ctx)
 	if err != nil {
-		return []backend.Device{}, fmt.Errorf("discover devices: %w", err)
+		return backend.DiscoveryResult{Devices: []backend.Device{}, Status: backend.StatusIdle},
+			fmt.Errorf("discover devices: %w", err)
 	}
-	return devices, nil
+	if result.Devices == nil {
+		result.Devices = []backend.Device{}
+	}
+	return result, nil
+}
+
+// CheckMdnsDiagnostics runs a quick (2 second) mDNS browse for
+// _apple-mobdev2._tcp and reports whether any device answered. It is a
+// diagnostic only; it never produces devices that can be used.
+func (a *App) CheckMdnsDiagnostics() (bool, error) {
+	visible, err := backend.CheckMdns(a.runtimeContext())
+	if err != nil {
+		return false, fmt.Errorf("check mdns: %w", err)
+	}
+	return visible, nil
 }
 
 // StopDiscovery cancels an in-flight discovery run. It is a no-op when no run

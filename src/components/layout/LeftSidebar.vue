@@ -76,6 +76,39 @@ const {
         </button>
       </div>
 
+      <!-- Blocked: phone visible on Wi-Fi, but Apple Devices does not list it -->
+      <div
+        v-else-if="status === 'blocked_by_apple'"
+        class="flex h-full flex-col items-center justify-center px-2 text-center"
+        role="alert"
+      >
+        <svg
+          class="mb-3 h-10 w-10 text-amber-500"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+          <path d="M12 9v4M12 17h.01" />
+        </svg>
+        <p class="text-sm font-medium text-amber-700 dark:text-amber-300">Apple Devices can't see your iPhone</p>
+        <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+          iPhone found on Wi-Fi, but Apple Devices cannot see it. Please open Apple Devices on your
+          PC, connect your iPhone via USB, and enable 'Show this iPhone when on Wi-Fi'.
+        </p>
+        <button
+          type="button"
+          class="mt-3 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-amber-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+          @click="refresh"
+        >
+          Retry
+        </button>
+      </div>
+
       <!-- Empty -->
       <div
         v-else-if="devices.length === 0"

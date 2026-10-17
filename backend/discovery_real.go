@@ -21,18 +21,24 @@ const deviceInfoTimeout = 4 * time.Second
 // provided by Apple Devices / iTunes and includes devices reachable over
 // Wi-Fi Sync. The ID of each Device is the UDID, which is what go-ios (and so
 // the photo library) needs.
-func Discover(ctx context.Context) ([]Device, error) {
+//
+// When usbmuxd lists nothing, mDNS is used purely as a diagnostic: if a phone
+// is visible on the network the status is StatusBlockedByApple instead of
+// StatusIdle. mDNS is never used to build the device list.
+func Discover(ctx context.Context) (DiscoveryResult, error) {
+	empty := DiscoveryResult{Devices: []Device{}, Status: StatusIdle}
+
 	if ctx == nil {
-		return nil, errors.New("discovery: nil context")
+		return empty, errors.New("discovery: nil context")
 	}
-	if err := ctx.Err(); err != nil {
-		return []Device{}, nil
+	if ctx.Err() != nil {
+		return empty, nil
 	}
 
 	list, err := goios.ListDevices()
 	if err != nil {
 		slog.Debug("go-ios list devices failed", "error", err)
-		return []Device{}, classifyDiscoveryError(err)
+		return empty, classifyDiscoveryError(err)
 	}
 
 	// A device can be listed twice (USB and Network); keep one entry per UDID
@@ -49,10 +55,14 @@ func Discover(ctx context.Context) ([]Device, error) {
 		}
 	}
 
+	if len(entries) == 0 {
+		return DiscoveryResult{Devices: []Device{}, Status: diagnoseEmptyList(ctx)}, nil
+	}
+
 	devices := make([]Device, 0, len(entries))
 	for udid, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			return []Device{}, nil
+		if ctx.Err() != nil {
+			return empty, nil
 		}
 		name, model := lookupDeviceInfo(ctx, entry)
 		if name == "" {
@@ -67,7 +77,38 @@ func Discover(ctx context.Context) ([]Device, error) {
 		}
 		return devices[i].ID < devices[j].ID
 	})
-	return devices, nil
+	return DiscoveryResult{Devices: devices, Status: StatusConnected}, nil
+}
+
+// diagnoseEmptyList runs the mDNS check after usbmuxd listed no device. A
+// failing check is only logged: it must never turn a normal "nothing found"
+// result into an error.
+func diagnoseEmptyList(ctx context.Context) string {
+	visible, err := CheckMdns(ctx)
+	if err != nil {
+		slog.Debug("mdns diagnostics failed", "error", err)
+		return StatusIdle
+	}
+	if visible {
+		return StatusBlockedByApple
+	}
+	return StatusIdle
+}
+
+// CheckMdns runs a short browse for _apple-mobdev2._tcp and reports whether
+// at least one device answered.
+func CheckMdns(ctx context.Context) (bool, error) {
+	if ctx == nil {
+		return false, errors.New("mdns diagnostics: nil context")
+	}
+	browseCtx, cancel := context.WithTimeout(ctx, MdnsDiagnosticsTimeout)
+	defer cancel()
+
+	devices, err := BrowseDevices(browseCtx)
+	if err != nil {
+		return false, err
+	}
+	return len(devices) > 0, nil
 }
 
 func shortID(udid string) string {

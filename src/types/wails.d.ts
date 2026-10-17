@@ -1,5 +1,5 @@
 import type { Album } from './album'
-import type { Device } from './device'
+import type { DiscoveryResult } from './device'
 import type { Photo } from './photo'
 
 /**
@@ -13,7 +13,8 @@ declare global {
     go?: {
       main?: {
         App?: {
-          DiscoverDevices(): Promise<Device[]>
+          DiscoverDevices(): Promise<DiscoveryResult>
+          CheckMdnsDiagnostics(): Promise<boolean>
           StopDiscovery(): Promise<void>
           LibraryMode(): Promise<'device' | 'mock'>
           FetchAlbums(deviceId: string): Promise<Album[]>
