@@ -5,10 +5,15 @@ export interface TransferOptions {
   /** 1-100 */
   jpgQuality: number
   destPath: string
+  /**
+   * Photo ID -> existing file inside `destPath` that the original replaces.
+   * Photos not listed keep both files (the new one gets a `_1` suffix).
+   */
+  overwritePaths?: Record<string, string>
 }
 
 /** The part of the options the user edits; the destination is chosen separately. */
-export type TransferFormatOptions = Omit<TransferOptions, 'destPath'>
+export type TransferFormatOptions = Omit<TransferOptions, 'destPath' | 'overwritePaths'>
 
 /** Mirrors the Go `backend.TransferError` struct. */
 export interface TransferError {

@@ -5,12 +5,15 @@ package backend
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -170,10 +173,18 @@ func (l *mockLibrary) Photos(ctx context.Context, deviceID, albumID string) ([]P
 	}
 
 	photos := make([]Photo, 0, 20)
-	for _, photo := range l.photos {
-		if photo.AlbumID == albumID {
-			photos = append(photos, photo)
+	for i, photo := range l.photos {
+		if photo.AlbumID != albumID {
+			continue
 		}
+		// Report the size of the file Download really produces, so a comparison
+		// with transferred files can match by size.
+		data, err := mockOriginalBytes(i, photo)
+		if err != nil {
+			return []Photo{}, err
+		}
+		photo.Size = int64(len(data))
+		photos = append(photos, photo)
 	}
 	return photos, nil
 }
@@ -240,15 +251,28 @@ func gradientImage(index, w, h int) *image.RGBA {
 }
 
 const (
-	mockOriginalLongSide = 960
+	mockOriginalLongSide = 640
 	mockDownloadChunks   = 8
 	mockChunkDelay       = 40 * time.Millisecond
+)
+
+var (
+	mockOriginalsMu sync.Mutex
+	mockOriginals   = map[int][]byte{}
 )
 
 // mockOriginalBytes renders the stand-in "original file" of a mock photo: a
 // JPEG, whatever the photo's declared format. The transfer code recognises
 // files by content, so a mock "HEIC" is handled as the JPEG it really is.
+// The result is memoized, so the size reported by the listing, by Describe and
+// by Download is always the same.
 func mockOriginalBytes(index int, photo Photo) ([]byte, error) {
+	mockOriginalsMu.Lock()
+	defer mockOriginalsMu.Unlock()
+	if data, ok := mockOriginals[index]; ok {
+		return data, nil
+	}
+
 	w, h := mockOriginalLongSide, mockOriginalLongSide
 	if photo.Width >= photo.Height {
 		h = mockOriginalLongSide * photo.Height / photo.Width
@@ -259,7 +283,46 @@ func mockOriginalBytes(index int, photo Photo) ([]byte, error) {
 	if err := jpeg.Encode(&buf, gradientImage(index, w, h), &jpeg.Options{Quality: 90}); err != nil {
 		return nil, fmt.Errorf("encode mock original: %w", err)
 	}
-	return buf.Bytes(), nil
+	mockOriginals[index] = buf.Bytes()
+	return mockOriginals[index], nil
+}
+
+// Hash returns the SHA-256 of the mock original, read in the same delayed
+// chunks as Download so cancellation can be tried.
+func (l *mockLibrary) Hash(ctx context.Context, deviceID, photoID string, onBytes func(n int64)) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := requireNonEmpty("deviceID", deviceID); err != nil {
+		return "", err
+	}
+	if err := requireNonEmpty("photoID", photoID); err != nil {
+		return "", err
+	}
+	index, photo, err := l.find(photoID)
+	if err != nil {
+		return "", err
+	}
+	data, err := mockOriginalBytes(index, photo)
+	if err != nil {
+		return "", err
+	}
+
+	h := sha256.New()
+	chunk := (len(data) + mockDownloadChunks - 1) / mockDownloadChunks
+	for start := 0; start < len(data); start += chunk {
+		end := min(start+chunk, len(data))
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(mockChunkDelay / 4):
+		}
+		h.Write(data[start:end])
+		if onBytes != nil {
+			onBytes(int64(end - start))
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func (l *mockLibrary) find(photoID string) (int, Photo, error) {

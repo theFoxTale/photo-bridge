@@ -3,7 +3,9 @@ package backend
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -77,6 +79,10 @@ type PhotoLibrary interface {
 	// the size of every chunk written. A cancelled ctx stops the download
 	// between chunks and removes the partial file.
 	DownloadPhoto(ctx context.Context, deviceID, photoID, destPath string, onBytes func(n int64)) error
+
+	// HashPhoto returns the hex SHA-256 of the photo, read in a stream from
+	// the device. Nothing is written to disk.
+	HashPhoto(ctx context.Context, deviceID, photoID string, onBytes func(n int64)) (string, error)
 }
 
 // mediaFormats maps lower-case file extensions to Photo.Format values.
@@ -728,10 +734,10 @@ func (l *AFCPhotoLibrary) DescribePhoto(deviceID, photoID string) (Photo, error)
 	return photo, nil
 }
 
-// download copies one remote file to destPath in downloadChunkBytes pieces and
-// returns the number of bytes written. The partial file is removed on error.
-// A cancelled ctx is returned as is.
-func (s *afcSession) download(ctx context.Context, remote, destPath string, onBytes func(n int64)) (written int64, err error) {
+// stream copies one remote file to dst in downloadChunkBytes pieces and
+// returns the number of bytes written. A cancelled ctx is returned as is. A
+// failing dst is reported as a permanent error: the connection is fine.
+func (s *afcSession) stream(ctx context.Context, remote string, dst io.Writer, onBytes func(n int64)) (written int64, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -749,23 +755,15 @@ func (s *afcSession) download(ctx context.Context, remote, destPath string, onBy
 	}
 	defer src.Close()
 
-	out, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return 0, permanentf("create %s: %w", destPath, err)
-	}
-
-	var copyErr error
 	buf := make([]byte, downloadChunkBytes)
 	for {
 		if err := ctx.Err(); err != nil {
-			copyErr = err
-			break
+			return written, err
 		}
 		n, readErr := src.Read(buf)
 		if n > 0 {
-			if _, writeErr := out.Write(buf[:n]); writeErr != nil {
-				copyErr = permanentf("write %s: %w", destPath, writeErr)
-				break
+			if _, writeErr := dst.Write(buf[:n]); writeErr != nil {
+				return written, permanentf("write local data: %w", writeErr)
 			}
 			written += int64(n)
 			if onBytes != nil {
@@ -776,20 +774,31 @@ func (s *afcSession) download(ctx context.Context, remote, destPath string, onBy
 			break
 		}
 		if readErr != nil {
-			copyErr = readErr
-			break
+			return written, readErr
 		}
 	}
 
-	if closeErr := out.Close(); copyErr == nil && closeErr != nil {
-		copyErr = permanentf("write %s: %w", destPath, closeErr)
+	if written != st.size {
+		return written, fmt.Errorf("incomplete download: received %d of %d bytes", written, st.size)
 	}
-	if copyErr == nil && written != st.size {
-		copyErr = fmt.Errorf("incomplete download: received %d of %d bytes", written, st.size)
+	return written, nil
+}
+
+// download copies one remote file to destPath. The partial file is removed on
+// error.
+func (s *afcSession) download(ctx context.Context, remote, destPath string, onBytes func(n int64)) (int64, error) {
+	out, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return 0, permanentf("create %s: %w", destPath, err)
 	}
-	if copyErr != nil {
+
+	written, err := s.stream(ctx, remote, out, onBytes)
+	if closeErr := out.Close(); err == nil && closeErr != nil {
+		err = permanentf("write %s: %w", destPath, closeErr)
+	}
+	if err != nil {
 		_ = os.Remove(destPath)
-		return written, copyErr
+		return written, err
 	}
 	return written, nil
 }
@@ -809,6 +818,48 @@ func (l *AFCPhotoLibrary) DownloadPhoto(ctx context.Context, deviceID, photoID, 
 	}
 	remote := dcimRoot + "/" + photoID
 
+	return l.withTransferSession(ctx, deviceID, photoID, "download photo", onBytes,
+		func(s *afcSession) (int64, error) {
+			return s.download(ctx, remote, destPath, onBytes)
+		})
+}
+
+// HashPhoto returns the hex SHA-256 of a photo, streamed from the device
+// without storing it. It uses the same dedicated connections as downloads.
+func (l *AFCPhotoLibrary) HashPhoto(ctx context.Context, deviceID, photoID string, onBytes func(n int64)) (string, error) {
+	if err := validateDeviceID(deviceID); err != nil {
+		return "", err
+	}
+	if !validPhotoID(photoID) {
+		return "", fmt.Errorf("invalid photoID %q", photoID)
+	}
+	remote := dcimRoot + "/" + photoID
+
+	var sum string
+	err := l.withTransferSession(ctx, deviceID, photoID, "read photo", onBytes,
+		func(s *afcSession) (int64, error) {
+			h := sha256.New() // a fresh hash for every attempt
+			n, err := s.stream(ctx, remote, h, onBytes)
+			if err == nil {
+				sum = hex.EncodeToString(h.Sum(nil))
+			}
+			return n, err
+		})
+	if err != nil {
+		return "", err
+	}
+	return sum, nil
+}
+
+// withTransferSession runs op on a dedicated connection. A connection failure
+// retries once on a fresh connection; bytes the failed attempt reported are
+// taken back with a negative onBytes value.
+func (l *AFCPhotoLibrary) withTransferSession(
+	ctx context.Context,
+	deviceID, photoID, action string,
+	onBytes func(n int64),
+	op func(s *afcSession) (written int64, err error),
+) error {
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		if err := ctx.Err(); err != nil {
@@ -822,10 +873,10 @@ func (l *AFCPhotoLibrary) DownloadPhoto(ctx context.Context, deviceID, photoID, 
 			s, err = connect(deviceID) // never reuse a pooled connection after a failure
 		}
 		if err != nil {
-			return wrapOperationError("download photo", err)
+			return wrapOperationError(action, err)
 		}
 
-		written, err := s.download(ctx, remote, destPath, onBytes)
+		written, err := op(s)
 		if err == nil {
 			l.releaseTransferSession(deviceID, s, true)
 			return nil
@@ -847,12 +898,12 @@ func (l *AFCPhotoLibrary) DownloadPhoto(ctx context.Context, deviceID, photoID, 
 			if isAFCStatusError(err) {
 				return fmt.Errorf("%s is not available on the device", path.Base(photoID))
 			}
-			return wrapOperationError("download photo", err)
+			return wrapOperationError(action, err)
 		}
-		slog.Debug("afc download failed, retrying on a fresh connection", "device", deviceID, "photo", photoID, "error", err)
+		slog.Debug("afc transfer failed, retrying on a fresh connection", "action", action, "device", deviceID, "photo", photoID, "error", err)
 		lastErr = err
 	}
-	slog.Debug("afc download failed after reconnect", "device", deviceID, "photo", photoID, "error", lastErr)
+	slog.Debug("afc transfer failed after reconnect", "action", action, "device", deviceID, "photo", photoID, "error", lastErr)
 	return ErrConnectionLost
 }
 

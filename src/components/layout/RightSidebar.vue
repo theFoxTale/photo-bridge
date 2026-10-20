@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
 import { computed } from 'vue'
+import { useComparisonStore } from '../../stores/comparisonStore'
+import { useDeviceStore } from '../../stores/deviceStore'
 import { usePhotoStore } from '../../stores/photoStore'
 import { useTransferStore } from '../../stores/transferStore'
 
@@ -8,6 +10,10 @@ type TransferFormat = 'original' | 'jpg' | 'both'
 
 const photoStore = usePhotoStore()
 const transferStore = useTransferStore()
+const comparisonStore = useComparisonStore()
+const deviceStore = useDeviceStore()
+const { isRunning: isComparing } = storeToRefs(comparisonStore)
+const { activeDeviceId } = storeToRefs(deviceStore)
 const { selectedIds } = storeToRefs(photoStore)
 const { options, destPath, isRunning, isCancelling, isChoosingFolder, error } =
   storeToRefs(transferStore)
@@ -38,6 +44,21 @@ const format = computed<TransferFormat>({
 const qualityEnabled = computed(() => options.value.saveJpg && !isRunning.value)
 const canTransfer = computed(() => selectedCount.value > 0 && !isRunning.value)
 
+const canCompare = computed(
+  () =>
+    !isComparing.value &&
+    !isRunning.value &&
+    activeDeviceId.value !== null &&
+    destPath.value.trim() !== '',
+)
+const compareTitle = computed(() => {
+  if (isComparing.value) return 'Comparison in progress…'
+  if (activeDeviceId.value === null) return 'Connect an iPhone to compare'
+  if (destPath.value.trim() === '') return 'Choose a destination folder to compare with'
+  if (isRunning.value) return 'Wait for the transfer to finish'
+  return 'Compare the iPhone with this folder'
+})
+
 async function onTransfer(): Promise<void> {
   if (!canTransfer.value) return
   await transferStore.startTransfer(Array.from(selectedIds.value))
@@ -63,12 +84,13 @@ async function onTransfer(): Promise<void> {
         >
           Destination folder
         </span>
+        <div class="flex items-stretch gap-2">
         <button
           type="button"
           :disabled="isRunning || isChoosingFolder"
           aria-labelledby="destination-label"
           :title="destPath === '' ? 'Choose the destination folder' : destPath"
-          class="flex w-full items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 py-2 text-left text-sm text-zinc-900 transition-colors hover:bg-zinc-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+          class="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 py-2 text-left text-sm text-zinc-900 transition-colors hover:bg-zinc-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
           @click="transferStore.chooseDestFolder()"
         >
           <svg
@@ -90,6 +112,39 @@ async function onTransfer(): Promise<void> {
             {{ isChoosingFolder ? 'Opening…' : destPath === '' ? 'Choose folder…' : destPath }}
           </span>
         </button>
+        <button
+          type="button"
+          :disabled="!canCompare"
+          :title="compareTitle"
+          :aria-label="compareTitle"
+          class="flex w-9 shrink-0 items-center justify-center rounded-md border border-zinc-300 text-zinc-600 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          @click="comparisonStore.runComparison(destPath)"
+        >
+          <svg
+            v-if="isComparing"
+            class="h-4 w-4 animate-spin text-blue-500"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4z" />
+          </svg>
+          <svg
+            v-else
+            class="h-4 w-4"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" />
+          </svg>
+        </button>
+        </div>
       </div>
 
       <fieldset :disabled="isRunning">

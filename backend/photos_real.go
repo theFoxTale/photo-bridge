@@ -66,6 +66,10 @@ func (d *deviceLibrary) Download(ctx context.Context, deviceID, photoID, destPat
 	return d.src.DownloadPhoto(ctx, deviceID, photoID, destPath, onBytes)
 }
 
+func (d *deviceLibrary) Hash(ctx context.Context, deviceID, photoID string, onBytes func(n int64)) (string, error) {
+	return d.src.HashPhoto(ctx, deviceID, photoID, onBytes)
+}
+
 // Close closes the cached device connections.
 func (d *deviceLibrary) Close() error {
 	return d.src.Close()

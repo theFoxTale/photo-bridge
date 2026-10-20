@@ -17,6 +17,13 @@ export function formatSpeed(bytesPerSec: number): string {
   return `${formatBytes(bytesPerSec)}/s`
 }
 
+/** ISO 8601 -> a local date and time, or an em dash when it cannot be read. */
+export function formatDateTime(iso: string): string {
+  const time = Date.parse(iso)
+  if (Number.isNaN(time)) return '—'
+  return new Date(time).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' })
+}
+
 /** 800 -> "<1s", 12400 -> "12s", 65000 -> "1m 05s", 3720000 -> "1h 02m" */
 export function formatDuration(ms: number): string {
   if (!Number.isFinite(ms) || ms < 1000) return '<1s'

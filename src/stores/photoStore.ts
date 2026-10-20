@@ -193,6 +193,14 @@ export const usePhotoStore = defineStore('photo', () => {
     selectedIds.value = new Set(photos.value.map((photo) => photo.id))
   }
 
+  /**
+   * Replaces the selection with the given IDs, even for photos that are not in
+   * the album currently shown (for example when picked from a comparison).
+   */
+  function selectIds(ids: string[]): void {
+    selectedIds.value = new Set(ids)
+  }
+
   return {
     albums,
     photos,
@@ -212,6 +220,7 @@ export const usePhotoStore = defineStore('photo', () => {
     toggleSelection,
     selectOnly,
     selectAll,
+    selectIds,
     clearSelection,
     reset,
   }

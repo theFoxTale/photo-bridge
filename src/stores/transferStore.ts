@@ -119,8 +119,15 @@ export const useTransferStore = defineStore('transfer', () => {
     }
   }
 
-  /** Transfers the given photos of the active device to the chosen folder. */
-  async function startTransfer(photoIds: string[]): Promise<void> {
+  /**
+   * Transfers the given photos of the active device to the chosen folder.
+   * `overwritePaths` maps photo IDs to existing local files their originals
+   * replace; all other photos never overwrite anything.
+   */
+  async function startTransfer(
+    photoIds: string[],
+    overwritePaths?: Record<string, string>,
+  ): Promise<void> {
     if (isRunning.value) return
     error.value = null
     result.value = null
@@ -152,6 +159,7 @@ export const useTransferStore = defineStore('transfer', () => {
       const outcome = await getApi().TransferPhotos(deviceId, photoIds, {
         ...options.value,
         destPath: destPath.value,
+        ...(overwritePaths ? { overwritePaths } : {}),
       })
       result.value = outcome
       announce(outcome)

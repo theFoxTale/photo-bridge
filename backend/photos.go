@@ -39,4 +39,8 @@ type Library interface {
 	// receives the size of each written chunk; a negative value takes back
 	// bytes of an attempt that was restarted.
 	Download(ctx context.Context, deviceID, photoID, destPath string, onBytes func(n int64)) error
+
+	// Hash returns the hex SHA-256 of the original file, streamed without
+	// storing it.
+	Hash(ctx context.Context, deviceID, photoID string, onBytes func(n int64)) (string, error)
 }

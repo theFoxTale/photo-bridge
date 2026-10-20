@@ -18,6 +18,9 @@ type App struct {
 	discoveryCancel context.CancelFunc
 	discoveryToken  uint64
 	transferCancel  context.CancelFunc // non-nil while a transfer runs
+	compareCancel   context.CancelFunc // non-nil while a comparison runs
+	hashCache       *backend.HashCache // opened on first comparison
+	hashCacheFailed bool               // opening failed; do not retry
 
 	library backend.Library
 }
@@ -66,7 +69,15 @@ func (a *App) shutdown(_ context.Context) {
 	if a.transferCancel != nil {
 		a.transferCancel()
 	}
+	if a.compareCancel != nil {
+		a.compareCancel()
+	}
+	cache := a.hashCache
 	a.mu.Unlock()
+
+	if err := cache.Close(); err != nil {
+		slog.Debug("closing hash cache failed", "error", err)
+	}
 
 	if closer, ok := a.library.(io.Closer); ok {
 		if err := closer.Close(); err != nil {

@@ -32,6 +32,12 @@ type TransferOptions struct {
 	SaveJPG      bool   `json:"saveJpg"`
 	JPGQuality   int    `json:"jpgQuality"` // 1-100
 	DestPath     string `json:"destPath"`
+
+	// OverwritePaths maps a photo ID to an existing file inside DestPath that
+	// its original replaces (used to resolve comparison conflicts). Photos not
+	// listed keep both files: an existing file with another size is never
+	// touched and the new one gets a "_1" style suffix.
+	OverwritePaths map[string]string `json:"overwritePaths"`
 }
 
 // TransferError describes one photo that could not be transferred.
@@ -112,7 +118,50 @@ func validateTransfer(deviceID string, photoIDs []string, opts TransferOptions) 
 		return nil, opts, fmt.Errorf("destination is not a folder: %s", abs)
 	}
 	opts.DestPath = abs
+
+	overwrite, err := validateOverwritePaths(ids, abs, opts.OverwritePaths)
+	if err != nil {
+		return nil, opts, err
+	}
+	opts.OverwritePaths = overwrite
 	return ids, opts, nil
+}
+
+// validateOverwritePaths checks that every overwrite target belongs to a
+// transferred photo, is an existing image file, and lies inside dest, so a
+// request can never replace files elsewhere on the disk.
+func validateOverwritePaths(ids []string, dest string, paths map[string]string) (map[string]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	selected := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		selected[id] = struct{}{}
+	}
+
+	clean := make(map[string]string, len(paths))
+	for id, target := range paths {
+		if _, ok := selected[id]; !ok {
+			return nil, fmt.Errorf("overwrite target given for a photo that is not being transferred: %s", id)
+		}
+		abs, err := filepath.Abs(strings.TrimSpace(target))
+		if err != nil {
+			return nil, fmt.Errorf("invalid overwrite path: %w", err)
+		}
+		rel, err := filepath.Rel(dest, abs)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("overwrite target is outside the destination folder: %s", abs)
+		}
+		if !localImageExts[strings.ToLower(filepath.Ext(abs))] {
+			return nil, fmt.Errorf("overwrite target is not an image file: %s", abs)
+		}
+		info, err := os.Stat(abs)
+		if err != nil || !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("overwrite target does not exist: %s", abs)
+		}
+		clean[id] = abs
+	}
+	return clean, nil
 }
 
 // transferRun is the state shared by the workers of one transfer.
@@ -358,11 +407,16 @@ func (r *transferRun) plan(info Photo, name string) (photoPlan, error) {
 	}
 
 	if wantOriginal {
-		path, skip, err := r.claimPath(name, func(fi fs.FileInfo) bool { return fi.Size() == info.Size })
-		if err != nil {
-			return p, err
+		if target, ok := r.opts.OverwritePaths[info.ID]; ok {
+			// A conflict the user chose to resolve by replacing the local file.
+			p.originalPath, p.saveOriginal = target, true
+		} else {
+			path, skip, err := r.claimPath(name, func(fi fs.FileInfo) bool { return fi.Size() == info.Size })
+			if err != nil {
+				return p, err
+			}
+			p.originalPath, p.saveOriginal = path, !skip
 		}
-		p.originalPath, p.saveOriginal = path, !skip
 	}
 	if wantJPG {
 		stem := strings.TrimSuffix(name, filepath.Ext(name))
@@ -378,7 +432,7 @@ func (r *transferRun) plan(info Photo, name string) (photoPlan, error) {
 // claimPath picks the destination path for name. A free path is reserved and
 // returned. An existing file for which same returns true means the work is
 // already done (skip). Any other existing file, or a path claimed earlier in
-// this run, makes the search continue with "name (1).ext", "name (2).ext", ...
+// this run, makes the search continue with "name_1.ext", "name_2.ext", ...
 func (r *transferRun) claimPath(name string, same func(fs.FileInfo) bool) (string, bool, error) {
 	ext := filepath.Ext(name)
 	stem := strings.TrimSuffix(name, ext)
@@ -389,7 +443,7 @@ func (r *transferRun) claimPath(name string, same func(fs.FileInfo) bool) (strin
 	for n := 0; n <= maxNameSuffix; n++ {
 		candidate := name
 		if n > 0 {
-			candidate = fmt.Sprintf("%s (%d)%s", stem, n, ext)
+			candidate = fmt.Sprintf("%s_%d%s", stem, n, ext)
 		}
 		path := filepath.Join(r.opts.DestPath, candidate)
 		key := strings.ToLower(path) // Windows file names are case-insensitive

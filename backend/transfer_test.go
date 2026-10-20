@@ -3,6 +3,8 @@ package backend
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"image"
@@ -61,10 +63,23 @@ type fakeLibrary struct {
 	data          map[string][]byte
 	downloadHook  func(ctx context.Context) error
 	downloadCalls int
+	hashHook      func(ctx context.Context, photoID string) error
+	listing       []Photo // when set, returned by Photos instead of an error
 }
 
 func newFakeLibrary() *fakeLibrary {
 	return &fakeLibrary{photos: map[string]Photo{}, data: map[string][]byte{}}
+}
+
+// addListed registers a photo that also shows up in the camera roll listing,
+// with the given date.
+func (l *fakeLibrary) addListed(id, filename, format, date string, data []byte) {
+	l.add(id, filename, format, data)
+	p := l.photos[id]
+	p.Date = date
+	p.AlbumID = cameraRollID
+	l.photos[id] = p
+	l.listing = append(l.listing, p)
 }
 
 func (l *fakeLibrary) add(id, filename, format string, data []byte) {
@@ -76,8 +91,14 @@ func (l *fakeLibrary) add(id, filename, format string, data []byte) {
 }
 
 func (l *fakeLibrary) Albums(context.Context, string) ([]Album, error) { return nil, errors.New("unused") }
-func (l *fakeLibrary) Photos(context.Context, string, string) ([]Photo, error) {
-	return nil, errors.New("unused")
+func (l *fakeLibrary) Photos(ctx context.Context, _, albumID string) ([]Photo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if l.listing == nil {
+		return nil, errors.New("unused")
+	}
+	return append([]Photo(nil), l.listing...), nil
 }
 func (l *fakeLibrary) Thumbnail(context.Context, string, string) (string, error) {
 	return "", errors.New("unused")
@@ -112,6 +133,26 @@ func (l *fakeLibrary) Download(ctx context.Context, _, photoID, destPath string,
 		onBytes(int64(len(data)))
 	}
 	return nil
+}
+
+func (l *fakeLibrary) Hash(ctx context.Context, _, photoID string, onBytes func(int64)) (string, error) {
+	l.mu.Lock()
+	hook := l.hashHook
+	l.mu.Unlock()
+	if hook != nil {
+		if err := hook(ctx, photoID); err != nil {
+			return "", err
+		}
+	}
+	data, ok := l.data[photoID]
+	if !ok {
+		return "", fmt.Errorf("photo %q not found", photoID)
+	}
+	if onBytes != nil {
+		onBytes(int64(len(data)))
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func readFile(t *testing.T, path string) []byte {
@@ -438,11 +479,11 @@ func TestRunTransferNameCollision(t *testing.T) {
 	if got := string(readFile(t, filepath.Join(dir, "IMG_1.HEIC"))); got != "something else" {
 		t.Error("an existing file with a different size was overwritten")
 	}
-	if !bytes.Equal(readFile(t, filepath.Join(dir, "IMG_1 (1).HEIC")), data) {
+	if !bytes.Equal(readFile(t, filepath.Join(dir, "IMG_1_1.HEIC")), data) {
 		t.Error("the photo was not saved under a numbered name")
 	}
 	if names := listDir(t, dir); len(names) != 2 {
-		t.Errorf("destination holds %v; the re-run must not create IMG_1 (2).HEIC", names)
+		t.Errorf("destination holds %v; the re-run must not create IMG_1_2.HEIC", names)
 	}
 }
 
@@ -571,5 +612,84 @@ func TestSanitizeFilename(t *testing.T) {
 		if got := sanitizeFilename(in); got != want {
 			t.Errorf("sanitizeFilename(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestRunTransferOverwritePaths(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "2026")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(sub, "IMG_9.JPG")
+	if err := os.WriteFile(target, []byte("old content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lib := newFakeLibrary()
+	data := testJPEG(t, false)
+	lib.add("a/IMG_9.JPG", "IMG_9.JPG", "jpeg", data)
+	opts := TransferOptions{
+		SaveOriginal:   true,
+		JPGQuality:     90,
+		DestPath:       dir,
+		OverwritePaths: map[string]string{"a/IMG_9.JPG": target},
+	}
+
+	res, err := RunTransfer(context.Background(), lib, "dev", []string{"a/IMG_9.JPG"}, opts, nil)
+	if err != nil || len(res.Succeeded) != 1 {
+		t.Fatalf("%+v, %v", res, err)
+	}
+	if !bytes.Equal(readFile(t, target), data) {
+		t.Error("the local file was not replaced")
+	}
+	if names := listDir(t, dir); len(names) != 1 || names[0] != "2026" {
+		t.Errorf("destination holds %v, want only the 2026 folder (no extra copy)", names)
+	}
+}
+
+func TestValidateOverwritePaths(t *testing.T) {
+	dir := t.TempDir()
+	inside := filepath.Join(dir, "IMG_1.JPG")
+	if err := os.WriteFile(inside, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "IMG_1.JPG")
+	if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	notImage := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(notImage, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base := TransferOptions{SaveOriginal: true, JPGQuality: 90, DestPath: dir}
+
+	tests := []struct {
+		name    string
+		paths   map[string]string
+		wantErr string
+	}{
+		{"inside", map[string]string{"a": inside}, ""},
+		{"outside the destination", map[string]string{"a": outside}, "outside the destination"},
+		{"not selected", map[string]string{"zzz": inside}, "not being transferred"},
+		{"not an image", map[string]string{"a": notImage}, "not an image"},
+		{"missing", map[string]string{"a": filepath.Join(dir, "gone.jpg")}, "does not exist"},
+		{"the folder itself", map[string]string{"a": dir}, "outside the destination"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := base
+			opts.OverwritePaths = tc.paths
+			_, _, err := validateTransfer("dev", []string{"a"}, opts)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want it to contain %q", err, tc.wantErr)
+			}
+		})
 	}
 }

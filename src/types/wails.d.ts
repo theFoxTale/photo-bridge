@@ -1,12 +1,13 @@
 import type { Album } from './album'
+import type { CompareResult } from './compare'
 import type { DiscoveryResult } from './device'
 import type { Photo } from './photo'
 import type { TransferOptions, TransferResult } from './transfer'
 
 /**
  * Methods the Go `App` struct exposes to the frontend. Only methods that
- * actually exist in app_discovery.go, app_photos.go and app_transfer.go are
- * declared here. `go` is optional because it is undefined when the page runs
+ * actually exist in app_discovery.go, app_photos.go, app_transfer.go and
+ * app_compare.go are declared here. `go` is optional because it is undefined when the page runs
  * outside the Wails shell (for example plain `vite` in a browser).
  *
  * `runtime` is the Wails runtime, of which only event subscription is used.
@@ -31,6 +32,9 @@ declare global {
             options: TransferOptions,
           ): Promise<TransferResult>
           CancelTransfer(): Promise<void>
+          /** Rejects with "comparison cancelled" when stopped with CancelCompare. */
+          CompareFolder(deviceId: string, localPath: string): Promise<CompareResult>
+          CancelCompare(): Promise<void>
         }
       }
     }
