@@ -31,4 +31,12 @@ type Library interface {
 	Albums(ctx context.Context, deviceID string) ([]Album, error)
 	Photos(ctx context.Context, deviceID, albumID string) ([]Photo, error)
 	Thumbnail(ctx context.Context, deviceID, photoID string) (string, error)
+
+	// Describe returns the metadata of one photo by ID.
+	Describe(ctx context.Context, deviceID, photoID string) (Photo, error)
+
+	// Download writes the original file to destPath. onBytes (optional)
+	// receives the size of each written chunk; a negative value takes back
+	// bytes of an attempt that was restarted.
+	Download(ctx context.Context, deviceID, photoID, destPath string, onBytes func(n int64)) error
 }

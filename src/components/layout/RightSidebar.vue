@@ -1,19 +1,18 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { usePhotoLibrary } from '../../composables/usePhotoLibrary'
+import { storeToRefs } from 'pinia'
+import { computed } from 'vue'
+import { usePhotoStore } from '../../stores/photoStore'
+import { useTransferStore } from '../../stores/transferStore'
 
 type TransferFormat = 'original' | 'jpg' | 'both'
 
-const props = defineProps<{
-  busy: boolean
-}>()
+const photoStore = usePhotoStore()
+const transferStore = useTransferStore()
+const { selectedIds } = storeToRefs(photoStore)
+const { options, destPath, isRunning, isCancelling, isChoosingFolder, error } =
+  storeToRefs(transferStore)
 
-const { selectedIds } = usePhotoLibrary()
 const selectedCount = computed(() => selectedIds.value.size)
-
-const emit = defineEmits<{
-  transfer: [payload: { destination: string; format: TransferFormat; quality: number }]
-}>()
 
 const formatOptions: readonly { value: TransferFormat; label: string }[] = [
   { value: 'original', label: 'Original only' },
@@ -21,27 +20,27 @@ const formatOptions: readonly { value: TransferFormat; label: string }[] = [
   { value: 'both', label: 'Original + JPG' },
 ]
 
-const destination = ref('')
-const format = ref<TransferFormat>('original')
-const quality = ref(95)
-const destinationError = ref<string | null>(null)
-
-const qualityEnabled = computed(() => format.value !== 'original')
-const canTransfer = computed(() => selectedIds.value.size > 0 && !props.busy)
-
-watch(destination, () => {
-  destinationError.value = null
+// The three radio buttons map onto the two booleans of the transfer options.
+const format = computed<TransferFormat>({
+  get: () => {
+    if (options.value.saveOriginal && options.value.saveJpg) return 'both'
+    return options.value.saveJpg ? 'jpg' : 'original'
+  },
+  set: (value) => {
+    options.value = {
+      ...options.value,
+      saveOriginal: value !== 'jpg',
+      saveJpg: value !== 'original',
+    }
+  },
 })
 
-function onTransfer(): void {
+const qualityEnabled = computed(() => options.value.saveJpg && !isRunning.value)
+const canTransfer = computed(() => selectedCount.value > 0 && !isRunning.value)
+
+async function onTransfer(): Promise<void> {
   if (!canTransfer.value) return
-  const trimmed = destination.value.trim()
-  if (trimmed === '') {
-    destinationError.value = 'Enter a destination folder.'
-    return
-  }
-  destinationError.value = null
-  emit('transfer', { destination: trimmed, format: format.value, quality: quality.value })
+  await transferStore.startTransfer(Array.from(selectedIds.value))
 }
 </script>
 
@@ -58,40 +57,49 @@ function onTransfer(): void {
 
     <form class="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-4" @submit.prevent="onTransfer">
       <div>
-        <label
-          for="destination"
+        <span
+          id="destination-label"
           class="mb-1.5 block text-xs font-medium text-zinc-700 dark:text-zinc-300"
         >
           Destination folder
-        </label>
-        <input
-          id="destination"
-          v-model="destination"
-          type="text"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="C:\Photos\iPhone"
-          class="w-full rounded-md border bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder-zinc-600"
-          :class="
-            destinationError
-              ? 'border-red-500'
-              : 'border-zinc-300 dark:border-zinc-700'
-          "
-          :aria-invalid="destinationError ? 'true' : 'false'"
-          :aria-describedby="destinationError ? 'destination-error' : undefined"
-        />
-        <p v-if="destinationError" id="destination-error" class="mt-1 text-xs text-red-500" role="alert">
-          {{ destinationError }}
-        </p>
+        </span>
+        <button
+          type="button"
+          :disabled="isRunning || isChoosingFolder"
+          aria-labelledby="destination-label"
+          :title="destPath === '' ? 'Choose the destination folder' : destPath"
+          class="flex w-full items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 py-2 text-left text-sm text-zinc-900 transition-colors hover:bg-zinc-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+          @click="transferStore.chooseDestFolder()"
+        >
+          <svg
+            class="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          </svg>
+          <span
+            class="min-w-0 flex-1 truncate"
+            :class="destPath === '' ? 'text-zinc-400 dark:text-zinc-500' : ''"
+          >
+            {{ isChoosingFolder ? 'Opening…' : destPath === '' ? 'Choose folder…' : destPath }}
+          </span>
+        </button>
       </div>
 
-      <fieldset>
+      <fieldset :disabled="isRunning">
         <legend class="mb-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">Format</legend>
         <div class="space-y-1">
           <label
             v-for="option in formatOptions"
             :key="option.value"
             class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-zinc-800 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            :class="isRunning ? 'cursor-not-allowed opacity-60' : ''"
           >
             <input
               v-model="format"
@@ -110,11 +118,13 @@ function onTransfer(): void {
           <label for="quality" class="text-xs font-medium text-zinc-700 dark:text-zinc-300">
             JPG quality
           </label>
-          <span class="text-xs tabular-nums text-zinc-500 dark:text-zinc-400">{{ quality }}</span>
+          <span class="text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
+            {{ options.jpgQuality }}
+          </span>
         </div>
         <input
           id="quality"
-          v-model.number="quality"
+          v-model.number="options.jpgQuality"
           type="range"
           min="80"
           max="100"
@@ -132,12 +142,26 @@ function onTransfer(): void {
         <p class="text-center text-xs text-zinc-500 dark:text-zinc-400" aria-live="polite">
           {{ selectedCount === 0 ? 'No files selected' : `${selectedCount} selected` }}
         </p>
+        <p v-if="error" class="text-xs text-red-500" role="alert">{{ error }}</p>
         <button
           type="submit"
           :disabled="!canTransfer"
           class="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400 dark:focus-visible:ring-offset-zinc-900 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500"
         >
-          Transfer Selected{{ selectedCount > 0 ? ` (${selectedCount})` : '' }}
+          {{
+            isRunning
+              ? 'Transferring…'
+              : `Transfer Selected${selectedCount > 0 ? ` (${selectedCount})` : ''}`
+          }}
+        </button>
+        <button
+          v-if="isRunning"
+          type="button"
+          :disabled="isCancelling"
+          class="w-full rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          @click="transferStore.cancelTransfer()"
+        >
+          {{ isCancelling ? 'Cancelling…' : 'Cancel' }}
         </button>
       </div>
     </form>

@@ -10,6 +10,7 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"os"
 	"time"
 )
 
@@ -211,6 +212,16 @@ func renderThumbnail(index, srcWidth, srcHeight int) (string, error) {
 		w = thumbnailLongSide * srcWidth / srcHeight
 	}
 
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, gradientImage(index, w, h), &jpeg.Options{Quality: 70}); err != nil {
+		return "", fmt.Errorf("encode thumbnail: %w", err)
+	}
+	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+}
+
+// gradientImage draws the diagonal gradient used for mock thumbnails and
+// mock originals.
+func gradientImage(index, w, h int) *image.RGBA {
 	colors := palette[index%len(palette)]
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	span := w + h - 2
@@ -225,12 +236,117 @@ func renderThumbnail(index, srcWidth, srcHeight int) (string, error) {
 			})
 		}
 	}
+	return img
+}
 
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 70}); err != nil {
-		return "", fmt.Errorf("encode thumbnail: %w", err)
+const (
+	mockOriginalLongSide = 960
+	mockDownloadChunks   = 8
+	mockChunkDelay       = 40 * time.Millisecond
+)
+
+// mockOriginalBytes renders the stand-in "original file" of a mock photo: a
+// JPEG, whatever the photo's declared format. The transfer code recognises
+// files by content, so a mock "HEIC" is handled as the JPEG it really is.
+func mockOriginalBytes(index int, photo Photo) ([]byte, error) {
+	w, h := mockOriginalLongSide, mockOriginalLongSide
+	if photo.Width >= photo.Height {
+		h = mockOriginalLongSide * photo.Height / photo.Width
+	} else {
+		w = mockOriginalLongSide * photo.Width / photo.Height
 	}
-	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, gradientImage(index, w, h), &jpeg.Options{Quality: 90}); err != nil {
+		return nil, fmt.Errorf("encode mock original: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func (l *mockLibrary) find(photoID string) (int, Photo, error) {
+	for i, photo := range l.photos {
+		if photo.ID == photoID {
+			return i, photo, nil
+		}
+	}
+	return 0, Photo{}, fmt.Errorf("photo %q not found", photoID)
+}
+
+func (l *mockLibrary) Describe(ctx context.Context, deviceID, photoID string) (Photo, error) {
+	if err := ctx.Err(); err != nil {
+		return Photo{}, err
+	}
+	if err := requireNonEmpty("deviceID", deviceID); err != nil {
+		return Photo{}, err
+	}
+	if err := requireNonEmpty("photoID", photoID); err != nil {
+		return Photo{}, err
+	}
+	index, photo, err := l.find(photoID)
+	if err != nil {
+		return Photo{}, err
+	}
+	data, err := mockOriginalBytes(index, photo)
+	if err != nil {
+		return Photo{}, err
+	}
+	photo.Size = int64(len(data))
+	return photo, nil
+}
+
+// Download writes the mock original in a few delayed chunks so progress and
+// cancellation can be tried without a phone.
+func (l *mockLibrary) Download(ctx context.Context, deviceID, photoID, destPath string, onBytes func(n int64)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := requireNonEmpty("deviceID", deviceID); err != nil {
+		return err
+	}
+	if err := requireNonEmpty("photoID", photoID); err != nil {
+		return err
+	}
+	if err := requireNonEmpty("destPath", destPath); err != nil {
+		return err
+	}
+	index, photo, err := l.find(photoID)
+	if err != nil {
+		return err
+	}
+	data, err := mockOriginalBytes(index, photo)
+	if err != nil {
+		return err
+	}
+
+	out, err := os.Create(destPath)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", destPath, err)
+	}
+	fail := func(cause error) error {
+		_ = out.Close()
+		_ = os.Remove(destPath)
+		return cause
+	}
+
+	chunk := (len(data) + mockDownloadChunks - 1) / mockDownloadChunks
+	for start := 0; start < len(data); start += chunk {
+		end := min(start+chunk, len(data))
+		select {
+		case <-ctx.Done():
+			return fail(ctx.Err())
+		case <-time.After(mockChunkDelay):
+		}
+		if _, err := out.Write(data[start:end]); err != nil {
+			return fail(fmt.Errorf("write %s: %w", destPath, err))
+		}
+		if onBytes != nil {
+			onBytes(int64(end - start))
+		}
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(destPath)
+		return fmt.Errorf("write %s: %w", destPath, err)
+	}
+	return nil
 }
 
 func lerp(from, to uint8, t float64) uint8 {

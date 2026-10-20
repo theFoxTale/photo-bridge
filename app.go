@@ -17,6 +17,7 @@ type App struct {
 	mu              sync.Mutex
 	discoveryCancel context.CancelFunc
 	discoveryToken  uint64
+	transferCancel  context.CancelFunc // non-nil while a transfer runs
 
 	library backend.Library
 }
@@ -37,6 +38,15 @@ func (a *App) runtimeContext() context.Context {
 	return a.ctx
 }
 
+// wailsContext returns the Wails runtime context, and false before startup
+// has run. Wails runtime functions (dialogs, events) abort the process when
+// given any other context, so they must only be called with this one.
+func (a *App) wailsContext() (context.Context, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.ctx, a.ctx != nil
+}
+
 // startup stores the Wails runtime context. It is not exported, so it is not
 // bound to the frontend.
 func (a *App) startup(ctx context.Context) {
@@ -52,6 +62,9 @@ func (a *App) shutdown(_ context.Context) {
 	if a.discoveryCancel != nil {
 		a.discoveryCancel()
 		a.discoveryCancel = nil
+	}
+	if a.transferCancel != nil {
+		a.transferCancel()
 	}
 	a.mu.Unlock()
 

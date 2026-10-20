@@ -2,11 +2,13 @@ package backend
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path"
 	"regexp"
 	"sort"
@@ -40,6 +42,9 @@ const (
 	// thumbnailPrefixBytes is how much of a file FetchThumbnail downloads.
 	thumbnailPrefixBytes = 64 * 1024
 
+	// downloadChunkBytes is the size of one AFC read request while downloading.
+	downloadChunkBytes = 256 * 1024
+
 	maxWalkDepth = 6
 	maxIDLength  = 512
 )
@@ -61,6 +66,17 @@ type PhotoLibrary interface {
 	FetchAlbums(deviceID string) ([]Album, error)
 	FetchPhotos(deviceID, albumID string) ([]Photo, error)
 	FetchThumbnail(deviceID, photoID string) ([]byte, error)
+
+	// DescribePhoto returns the metadata (name, size, format, date) of one
+	// photo without listing its album.
+	DescribePhoto(deviceID, photoID string) (Photo, error)
+
+	// DownloadPhoto streams the photo to destPath without holding it in
+	// memory. It uses a connection of its own, so it neither blocks nor is
+	// blocked by listing and thumbnail requests. onBytes (optional) receives
+	// the size of every chunk written. A cancelled ctx stops the download
+	// between chunks and removes the partial file.
+	DownloadPhoto(ctx context.Context, deviceID, photoID, destPath string, onBytes func(n int64)) error
 }
 
 // mediaFormats maps lower-case file extensions to Photo.Format values.
@@ -300,25 +316,57 @@ type AFCPhotoLibrary struct {
 	mu       sync.Mutex
 	sessions map[string]*afcSession
 	closed   bool
+
+	// transferIdle holds connections reserved for downloads, per device. They
+	// are separate from sessions so that a long download never blocks listing
+	// or thumbnails, and so that parallel downloads do not queue on one
+	// connection.
+	transferIdle map[string][]*afcSession
 }
 
 // NewAFCPhotoLibrary creates an empty library; connections open on demand.
 func NewAFCPhotoLibrary() *AFCPhotoLibrary {
-	return &AFCPhotoLibrary{sessions: make(map[string]*afcSession)}
+	return &AFCPhotoLibrary{
+		sessions:     make(map[string]*afcSession),
+		transferIdle: make(map[string][]*afcSession),
+	}
 }
 
 // Close closes every cached AFC connection. The library cannot be used after.
 func (l *AFCPhotoLibrary) Close() error {
 	l.mu.Lock()
 	sessions := l.sessions
+	idle := l.transferIdle
 	l.sessions = make(map[string]*afcSession)
+	l.transferIdle = make(map[string][]*afcSession)
 	l.closed = true
 	l.mu.Unlock()
 
 	for _, s := range sessions {
 		s.close()
 	}
+	for _, list := range idle {
+		for _, s := range list {
+			s.close()
+		}
+	}
 	return nil
+}
+
+// connect opens a new AFC connection to the device.
+func connect(deviceID string) (*afcSession, error) {
+	device, err := goios.GetDevice(deviceID)
+	if err != nil {
+		return nil, classifyConnectError(err)
+	}
+	conn, err := goios.ConnectToService(device, afcService)
+	if err != nil {
+		return nil, classifyConnectError(err)
+	}
+
+	s := &afcSession{conn: conn, client: afc.NewFromConn(conn)}
+	s.packetNum.Store(1 << 32)
+	return s, nil
 }
 
 // session returns the cached connection for the device or opens a new one.
@@ -334,19 +382,47 @@ func (l *AFCPhotoLibrary) session(deviceID string) (*afcSession, error) {
 		return s, nil
 	}
 
-	device, err := goios.GetDevice(deviceID)
+	s, err := connect(deviceID)
 	if err != nil {
-		return nil, classifyConnectError(err)
+		return nil, err
 	}
-	conn, err := goios.ConnectToService(device, afcService)
-	if err != nil {
-		return nil, classifyConnectError(err)
-	}
-
-	s := &afcSession{conn: conn, client: afc.NewFromConn(conn)}
-	s.packetNum.Store(1 << 32)
 	l.sessions[deviceID] = s
 	return s, nil
+}
+
+// acquireTransferSession hands out an idle download connection or opens one.
+// The caller owns it until releaseTransferSession.
+func (l *AFCPhotoLibrary) acquireTransferSession(deviceID string) (*afcSession, error) {
+	l.mu.Lock()
+	if l.closed {
+		l.mu.Unlock()
+		return nil, errors.New("photo library is closed")
+	}
+	if list := l.transferIdle[deviceID]; len(list) > 0 {
+		s := list[len(list)-1]
+		l.transferIdle[deviceID] = list[:len(list)-1]
+		l.mu.Unlock()
+		return s, nil
+	}
+	l.mu.Unlock()
+
+	// Connect outside the lock so parallel workers can connect at once.
+	return connect(deviceID)
+}
+
+// releaseTransferSession returns a healthy connection to the idle pool, or
+// closes it when it failed or the library was closed meanwhile.
+func (l *AFCPhotoLibrary) releaseTransferSession(deviceID string, s *afcSession, healthy bool) {
+	if healthy {
+		l.mu.Lock()
+		if !l.closed {
+			l.transferIdle[deviceID] = append(l.transferIdle[deviceID], s)
+			l.mu.Unlock()
+			return
+		}
+		l.mu.Unlock()
+	}
+	s.close()
 }
 
 // drop forgets and closes a connection that failed.
@@ -615,6 +691,169 @@ func (l *AFCPhotoLibrary) FetchThumbnail(deviceID, photoID string) ([]byte, erro
 		return nil, wrapOperationError("read thumbnail", err)
 	}
 	return data, nil
+}
+
+// DescribePhoto returns the metadata of one photo. The album ID is not known
+// from a bare photo ID and is left empty.
+func (l *AFCPhotoLibrary) DescribePhoto(deviceID, photoID string) (Photo, error) {
+	if err := validateDeviceID(deviceID); err != nil {
+		return Photo{}, err
+	}
+	if !validPhotoID(photoID) {
+		return Photo{}, fmt.Errorf("invalid photoID %q", photoID)
+	}
+	if _, ok := formatOf(photoID); !ok {
+		return Photo{}, fmt.Errorf("unsupported file type for %q", photoID)
+	}
+
+	var photo Photo
+	err := l.run(deviceID, func(s *afcSession) error {
+		absPath := dcimRoot + "/" + photoID
+		st, err := s.stat(absPath)
+		if err != nil {
+			return err
+		}
+		if st.isDir {
+			return permanentf("%q is not a file", photoID)
+		}
+		photo = buildPhoto("", absPath, st)
+		return nil
+	})
+	if err != nil {
+		if isAFCStatusError(err) {
+			return Photo{}, fmt.Errorf("%s is not available on the device", path.Base(photoID))
+		}
+		return Photo{}, wrapOperationError("read photo details", err)
+	}
+	return photo, nil
+}
+
+// download copies one remote file to destPath in downloadChunkBytes pieces and
+// returns the number of bytes written. The partial file is removed on error.
+// A cancelled ctx is returned as is.
+func (s *afcSession) download(ctx context.Context, remote, destPath string, onBytes func(n int64)) (written int64, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	st, err := s.stat(remote)
+	if err != nil {
+		return 0, err
+	}
+	if st.isDir {
+		return 0, permanentf("%q is a directory", remote)
+	}
+
+	src, err := s.client.Open(remote, afc.READ_ONLY)
+	if err != nil {
+		return 0, err
+	}
+	defer src.Close()
+
+	out, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return 0, permanentf("create %s: %w", destPath, err)
+	}
+
+	var copyErr error
+	buf := make([]byte, downloadChunkBytes)
+	for {
+		if err := ctx.Err(); err != nil {
+			copyErr = err
+			break
+		}
+		n, readErr := src.Read(buf)
+		if n > 0 {
+			if _, writeErr := out.Write(buf[:n]); writeErr != nil {
+				copyErr = permanentf("write %s: %w", destPath, writeErr)
+				break
+			}
+			written += int64(n)
+			if onBytes != nil {
+				onBytes(int64(n))
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			copyErr = readErr
+			break
+		}
+	}
+
+	if closeErr := out.Close(); copyErr == nil && closeErr != nil {
+		copyErr = permanentf("write %s: %w", destPath, closeErr)
+	}
+	if copyErr == nil && written != st.size {
+		copyErr = fmt.Errorf("incomplete download: received %d of %d bytes", written, st.size)
+	}
+	if copyErr != nil {
+		_ = os.Remove(destPath)
+		return written, copyErr
+	}
+	return written, nil
+}
+
+// DownloadPhoto streams a photo from the device to destPath. A connection
+// failure retries once on a fresh connection; bytes already reported for the
+// failed attempt are reported back as a negative onBytes value.
+func (l *AFCPhotoLibrary) DownloadPhoto(ctx context.Context, deviceID, photoID, destPath string, onBytes func(n int64)) error {
+	if err := validateDeviceID(deviceID); err != nil {
+		return err
+	}
+	if !validPhotoID(photoID) {
+		return fmt.Errorf("invalid photoID %q", photoID)
+	}
+	if strings.TrimSpace(destPath) == "" {
+		return errors.New("destPath must not be empty")
+	}
+	remote := dcimRoot + "/" + photoID
+
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var s *afcSession
+		var err error
+		if attempt == 0 {
+			s, err = l.acquireTransferSession(deviceID)
+		} else {
+			s, err = connect(deviceID) // never reuse a pooled connection after a failure
+		}
+		if err != nil {
+			return wrapOperationError("download photo", err)
+		}
+
+		written, err := s.download(ctx, remote, destPath, onBytes)
+		if err == nil {
+			l.releaseTransferSession(deviceID, s, true)
+			return nil
+		}
+		if written > 0 && onBytes != nil {
+			onBytes(-written)
+		}
+
+		// An answer from the device (or a local file problem) means the
+		// connection itself is fine and a retry would fail the same way.
+		var permanent permanentError
+		deviceAnswered := errors.As(err, &permanent) || isAFCStatusError(err)
+		l.releaseTransferSession(deviceID, s, deviceAnswered)
+
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if deviceAnswered {
+			if isAFCStatusError(err) {
+				return fmt.Errorf("%s is not available on the device", path.Base(photoID))
+			}
+			return wrapOperationError("download photo", err)
+		}
+		slog.Debug("afc download failed, retrying on a fresh connection", "device", deviceID, "photo", photoID, "error", err)
+		lastErr = err
+	}
+	slog.Debug("afc download failed after reconnect", "device", deviceID, "photo", photoID, "error", lastErr)
+	return ErrConnectionLost
 }
 
 // wrapOperationError keeps user-facing sentinel errors readable and adds

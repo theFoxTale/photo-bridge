@@ -55,6 +55,17 @@ func (d *deviceLibrary) Thumbnail(ctx context.Context, deviceID, photoID string)
 	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), nil
 }
 
+func (d *deviceLibrary) Describe(ctx context.Context, deviceID, photoID string) (Photo, error) {
+	if err := ctx.Err(); err != nil {
+		return Photo{}, err
+	}
+	return d.src.DescribePhoto(deviceID, photoID)
+}
+
+func (d *deviceLibrary) Download(ctx context.Context, deviceID, photoID, destPath string, onBytes func(n int64)) error {
+	return d.src.DownloadPhoto(ctx, deviceID, photoID, destPath, onBytes)
+}
+
 // Close closes the cached device connections.
 func (d *deviceLibrary) Close() error {
 	return d.src.Close()
