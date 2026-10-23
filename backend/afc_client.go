@@ -29,7 +29,9 @@ import (
 //     roll folder are listed. Favorites, Screenshots and user albums live in
 //     PhotoData/Photos.sqlite, which is not parsed yet.
 //   - Live Photos appear as two separate files (image + MOV).
-//   - Thumbnails are a temporary stand-in, see FetchThumbnail.
+//   - Previews are resized JPEGs in the local thumbnail cache. DNG and MOV
+//     have no preview. FetchThumbnail still returns only a short file prefix
+//     and is not used for previews.
 
 const (
 	afcService = "com.apple.afc"
@@ -654,12 +656,10 @@ func validPhotoID(id string) bool {
 
 // FetchThumbnail returns the first thumbnailPrefixBytes bytes of a JPEG or PNG.
 //
-// TEMPORARY STRATEGY: this is not a real thumbnail. Browsers render a
-// truncated JPEG/PNG partially, which is enough for a rough preview.
-// HEIC, DNG and MOV cannot be shown by the WebView from a file prefix, so for
-// those an error is returned and the UI shows "Preview unavailable". A proper
-// image pipeline (or the PhotoData/Photos.sqlite thumbnail references) will
-// replace this in a later stage.
+// Previews do not use this. deviceLibrary.Thumbnail downloads the full file
+// and stores a resized JPEG through cachedThumbnail. This prefix reader remains
+// for a short sample of a JPEG or PNG. HEIC, DNG and MOV are rejected here
+// because a file prefix is not a decodable image.
 func (l *AFCPhotoLibrary) FetchThumbnail(deviceID, photoID string) ([]byte, error) {
 	if err := validateDeviceID(deviceID); err != nil {
 		return nil, err

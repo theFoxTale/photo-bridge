@@ -12,7 +12,7 @@ type Photo struct {
 	Width    int    `json:"width"`
 	Height   int    `json:"height"`
 	AlbumID  string `json:"albumId"`
-	// ThumbURL is a base64 data URL of a ~200px thumbnail. FetchPhotos leaves it
+	// ThumbURL is a base64 JPEG data URL of a preview. FetchPhotos leaves it
 	// empty on purpose; thumbnails are fetched lazily through FetchThumbnail.
 	ThumbURL string `json:"thumbUrl"`
 }

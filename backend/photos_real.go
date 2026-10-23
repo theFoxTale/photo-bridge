@@ -2,12 +2,7 @@
 
 package backend
 
-import (
-	"context"
-	"encoding/base64"
-	"fmt"
-	"net/http"
-)
+import "context"
 
 // LibraryMode reports where photo data comes from in this build.
 func LibraryMode() string {
@@ -43,16 +38,9 @@ func (d *deviceLibrary) Thumbnail(ctx context.Context, deviceID, photoID string)
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	data, err := d.src.FetchThumbnail(deviceID, photoID)
-	if err != nil {
-		return "", err
-	}
-
-	mime := http.DetectContentType(data)
-	if mime != "image/jpeg" && mime != "image/png" {
-		return "", fmt.Errorf("preview not available for content type %s", mime)
-	}
-	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), nil
+	return cachedThumbnail(ctx, deviceID, photoID, func(ctx context.Context, destPath string) error {
+		return d.Download(ctx, deviceID, photoID, destPath, nil)
+	})
 }
 
 func (d *deviceLibrary) Describe(ctx context.Context, deviceID, photoID string) (Photo, error) {

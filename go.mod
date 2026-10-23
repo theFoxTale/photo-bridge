@@ -8,6 +8,8 @@ require (
 	github.com/dsoprea/go-exif/v3 v3.0.1
 	github.com/grandcat/zeroconf v1.0.0
 	github.com/wailsapp/wails/v2 v2.16.0
+	golang.org/x/image v0.47.0
+	golang.org/x/sync v0.24.0
 	modernc.org/sqlite v1.60.1
 )
 
@@ -52,10 +54,9 @@ require (
 	golang.org/x/exp v0.0.0-20230725093048-515e97ebf090 // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.59.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
-	golang.org/x/tools v0.50.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/tools v0.51.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	howett.net/plist v1.0.2-0.20250314012144-ee69052608d9 // indirect
 	modernc.org/libc v1.77.1 // indirect

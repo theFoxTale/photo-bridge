@@ -55,7 +55,9 @@ func (a *App) FetchPhotos(deviceID, albumID string) ([]backend.Photo, error) {
 	return photos, nil
 }
 
-// FetchThumbnail returns a base64 data URL of the photo's ~200px thumbnail.
+// FetchThumbnail returns a base64 JPEG data URL for a photo preview.
+// Device builds resize the original to at most 400 pixels on the long side
+// and cache the result on disk.
 func (a *App) FetchThumbnail(deviceID, photoID string) (string, error) {
 	if err := requireID("deviceID", deviceID); err != nil {
 		return "", err
