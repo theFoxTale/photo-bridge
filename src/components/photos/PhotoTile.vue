@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import type { SyncStatus } from '../../types/compare'
 import type { Photo } from '../../types/photo'
 
 const props = defineProps<{
@@ -8,6 +9,7 @@ const props = defineProps<{
   /** Data URL of the thumbnail, or null while it has not been loaded. */
   thumbUrl: string | null
   thumbFailed: boolean
+  syncStatus: SyncStatus
 }>()
 
 const emit = defineEmits<{
@@ -52,6 +54,17 @@ onBeforeUnmount(stopObserving)
 function onTileClick(event: MouseEvent): void {
   emit('select', event.ctrlKey || event.metaKey ? 'toggle' : 'only')
 }
+
+const statusNote = computed(() => {
+  switch (props.syncStatus) {
+    case 'synced':
+      return ', already on this PC'
+    case 'conflict':
+      return ', conflicts with a file on this PC'
+    default:
+      return ''
+  }
+})
 </script>
 
 <template>
@@ -64,7 +77,7 @@ function onTileClick(event: MouseEvent): void {
       type="button"
       class="absolute inset-0 block h-full w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400"
       :aria-pressed="selected"
-      :aria-label="`${selected ? 'Selected' : 'Select'} ${photo.filename}`"
+      :aria-label="`${selected ? 'Selected' : 'Select'} ${photo.filename}${statusNote}`"
       @click="onTileClick"
     >
       <img
@@ -73,10 +86,12 @@ function onTileClick(event: MouseEvent): void {
         :alt="photo.filename"
         draggable="false"
         class="h-full w-full select-none object-cover"
+        :class="syncStatus === 'synced' ? 'opacity-50' : ''"
       />
       <span
         v-else-if="thumbFailed"
         class="flex h-full w-full flex-col items-center justify-center gap-1 bg-zinc-200 text-xs text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+        :class="syncStatus === 'synced' ? 'opacity-50' : ''"
       >
         <svg
           class="h-6 w-6"
@@ -93,7 +108,51 @@ function onTileClick(event: MouseEvent): void {
         </svg>
         Preview unavailable
       </span>
-      <span v-else class="block h-full w-full animate-pulse bg-zinc-200 dark:bg-zinc-800" />
+      <span
+        v-else
+        class="block h-full w-full animate-pulse bg-zinc-200 dark:bg-zinc-800"
+        :class="syncStatus === 'synced' ? 'opacity-50' : ''"
+      />
+
+      <span
+        v-if="syncStatus === 'synced'"
+        class="pointer-events-none absolute left-2 top-2 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white shadow"
+        title="Already on this PC"
+      >
+        <svg
+          class="h-3 w-3"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="3"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M20 6 9 17l-5-5" />
+        </svg>
+        <span class="sr-only">Already on this PC</span>
+      </span>
+      <span
+        v-else-if="syncStatus === 'conflict'"
+        class="pointer-events-none absolute left-2 top-2 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-white shadow"
+        title="Conflicts with a file on this PC"
+      >
+        <svg
+          class="h-3.5 w-3.5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 9v4M12 17h.01" />
+          <path d="M10.3 4.3 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0z" />
+        </svg>
+        <span class="sr-only">Conflicts with a file on this PC</span>
+      </span>
 
       <!-- Hover overlay -->
       <span

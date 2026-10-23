@@ -1,7 +1,9 @@
 import { defineStore } from 'pinia'
 import { computed, reactive, ref } from 'vue'
 import type { Album } from '../types/album'
+import type { SyncStatus } from '../types/compare'
 import type { Photo } from '../types/photo'
+import { useComparisonStore } from './comparisonStore'
 
 type WailsApp = NonNullable<NonNullable<NonNullable<Window['go']>['main']>['App']>
 
@@ -40,6 +42,23 @@ export const usePhotoStore = defineStore('photo', () => {
   const isLoading = computed(() => pending.value > 0)
 
   const selectedCount = computed(() => selectedIds.value.size)
+
+  // Photo id -> sync status for the latest comparison. Read inside the computed
+  // so this store and the comparison store can be created in either order.
+  const syncStatusById = computed(() => {
+    const current = useComparisonStore().result
+    const statuses = new Map<string, SyncStatus>()
+    if (!current) return statuses
+    for (const photo of current.alreadyOnPc) statuses.set(photo.id, 'synced')
+    for (const photo of current.newOnDevice) statuses.set(photo.id, 'new')
+    for (const conflict of current.conflicts) statuses.set(conflict.photo.id, 'conflict')
+    return statuses
+  })
+
+  /** `unknown` until a comparison has classified this photo. */
+  function syncStatusFor(id: string): SyncStatus {
+    return syncStatusById.value.get(id) ?? 'unknown'
+  }
 
   // Device the loaded data belongs to; thumbnails are requested for it.
   let currentDeviceId: string | null = null
@@ -214,6 +233,7 @@ export const usePhotoStore = defineStore('photo', () => {
     thumbnailCache,
     failedThumbnails,
     selectedCount,
+    syncStatusFor,
     loadAlbums,
     loadPhotos,
     loadThumbnail,

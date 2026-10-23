@@ -1,11 +1,12 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import type {
   TransferFormatOptions,
   TransferProgress,
   TransferResult,
 } from '../types/transfer'
 import { formatBytes, formatDuration } from '../utils/format'
+import { useComparisonStore } from './comparisonStore'
 import { useDeviceStore } from './deviceStore'
 import { usePhotoStore } from './photoStore'
 import { useToastStore } from './toastStore'
@@ -102,6 +103,17 @@ export const useTransferStore = defineStore('transfer', () => {
     toastStore.show({ kind, message, detail }, detail ? 14000 : 8000)
   }
 
+  /**
+   * Compares the connected device with the destination folder without blocking
+   * the grid. The comparison store keeps the previous result visible until the
+   * new one arrives.
+   */
+  function runBackgroundCompare(): Promise<void> {
+    const folder = destPath.value.trim()
+    if (folder === '' || deviceStore.activeDeviceId === null) return Promise.resolve()
+    return useComparisonStore().runComparison(folder)
+  }
+
   /** Opens the native folder picker. Keeps the current folder when cancelled. */
   async function chooseDestFolder(): Promise<void> {
     if (isChoosingFolder.value || isRunning.value) return
@@ -109,8 +121,11 @@ export const useTransferStore = defineStore('transfer', () => {
     try {
       const chosen = await getApi().SelectFolder()
       if (chosen !== '') {
+        const sameFolder = chosen === destPath.value
         destPath.value = chosen
         error.value = null
+        // Setting the same path again does not notify the watcher below.
+        if (sameFolder) void runBackgroundCompare()
       }
     } catch (err) {
       error.value = toMessage(err)
@@ -163,6 +178,9 @@ export const useTransferStore = defineStore('transfer', () => {
       })
       result.value = outcome
       announce(outcome)
+      if (outcome.succeeded.length > 0) {
+        void runBackgroundCompare()
+      }
     } catch (err) {
       error.value = toMessage(err)
     } finally {
@@ -171,6 +189,17 @@ export const useTransferStore = defineStore('transfer', () => {
       progress.value = null
     }
   }
+
+  // A newly chosen folder (or a phone that connects after the folder was
+  // chosen) is scanned in the background. A transfer that is still running
+  // rescans itself once it finishes successfully.
+  watch(
+    [destPath, () => deviceStore.activeDeviceId],
+    ([path, deviceId]) => {
+      if (path.trim() === '' || deviceId === null || isRunning.value) return
+      void runBackgroundCompare()
+    },
+  )
 
   /** Asks the backend to stop; the running `startTransfer` then settles with a partial result. */
   async function cancelTransfer(): Promise<void> {
@@ -196,5 +225,6 @@ export const useTransferStore = defineStore('transfer', () => {
     startTransfer,
     cancelTransfer,
     chooseDestFolder,
+    runBackgroundCompare,
   }
 })

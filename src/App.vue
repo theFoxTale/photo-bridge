@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import ComparisonView from './components/comparison/ComparisonView.vue'
 import BottomBar from './components/layout/BottomBar.vue'
 import LeftSidebar from './components/layout/LeftSidebar.vue'
 import RightSidebar from './components/layout/RightSidebar.vue'
@@ -62,7 +61,6 @@ onBeforeUnmount(() => {
     </main>
 
     <BottomBar />
-    <ComparisonView />
     <ToastHost />
   </div>
 </template>

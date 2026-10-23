@@ -5,6 +5,7 @@ import { useComparisonStore } from '../../stores/comparisonStore'
 import { useDeviceStore } from '../../stores/deviceStore'
 import { usePhotoStore } from '../../stores/photoStore'
 import { useTransferStore } from '../../stores/transferStore'
+import type { CompareProgress } from '../../types/compare'
 
 type TransferFormat = 'original' | 'jpg' | 'both'
 
@@ -12,7 +13,8 @@ const photoStore = usePhotoStore()
 const transferStore = useTransferStore()
 const comparisonStore = useComparisonStore()
 const deviceStore = useDeviceStore()
-const { isRunning: isComparing } = storeToRefs(comparisonStore)
+const { result, isRunning: isComparing, progress: compareProgress, error: compareError, counts } =
+  storeToRefs(comparisonStore)
 const { activeDeviceId } = storeToRefs(deviceStore)
 const { selectedIds } = storeToRefs(photoStore)
 const { options, destPath, isRunning, isCancelling, isChoosingFolder, error } =
@@ -44,20 +46,38 @@ const format = computed<TransferFormat>({
 const qualityEnabled = computed(() => options.value.saveJpg && !isRunning.value)
 const canTransfer = computed(() => selectedCount.value > 0 && !isRunning.value)
 
-const canCompare = computed(
+const showSyncStatus = computed(
   () =>
-    !isComparing.value &&
-    !isRunning.value &&
-    activeDeviceId.value !== null &&
-    destPath.value.trim() !== '',
+    destPath.value.trim() !== '' &&
+    (result.value !== null || isComparing.value || compareError.value !== null),
 )
-const compareTitle = computed(() => {
-  if (isComparing.value) return 'Comparison in progress…'
-  if (activeDeviceId.value === null) return 'Connect an iPhone to compare'
-  if (destPath.value.trim() === '') return 'Choose a destination folder to compare with'
-  if (isRunning.value) return 'Wait for the transfer to finish'
-  return 'Compare the iPhone with this folder'
-})
+
+const canSyncNew = computed(
+  () => !isRunning.value && activeDeviceId.value !== null && counts.value.new > 0,
+)
+
+function compareStatusText(progress: CompareProgress | null): string {
+  if (!progress) return 'Comparing…'
+  switch (progress.phase) {
+    case 'scanning':
+      return `Scanning the folder… ${progress.scanned} found`
+    case 'listing':
+      return 'Reading the iPhone photo list…'
+    case 'hashing':
+      return progress.total > 0
+        ? `Verifying matches… ${progress.scanned} of ${progress.total}`
+        : 'Verifying matches…'
+    default:
+      return 'Comparing…'
+  }
+}
+
+/** Copies every photo the comparison classified as new. Conflicts stay put. */
+async function syncNewPhotos(): Promise<void> {
+  if (!canSyncNew.value) return
+  const ids = result.value?.newOnDevice.map((photo) => photo.id) ?? []
+  await transferStore.startTransfer(ids)
+}
 
 async function onTransfer(): Promise<void> {
   if (!canTransfer.value) return
@@ -84,13 +104,12 @@ async function onTransfer(): Promise<void> {
         >
           Destination folder
         </span>
-        <div class="flex items-stretch gap-2">
         <button
           type="button"
           :disabled="isRunning || isChoosingFolder"
           aria-labelledby="destination-label"
           :title="destPath === '' ? 'Choose the destination folder' : destPath"
-          class="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 py-2 text-left text-sm text-zinc-900 transition-colors hover:bg-zinc-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+          class="flex w-full items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 py-2 text-left text-sm text-zinc-900 transition-colors hover:bg-zinc-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
           @click="transferStore.chooseDestFolder()"
         >
           <svg
@@ -112,40 +131,68 @@ async function onTransfer(): Promise<void> {
             {{ isChoosingFolder ? 'Opening…' : destPath === '' ? 'Choose folder…' : destPath }}
           </span>
         </button>
-        <button
-          type="button"
-          :disabled="!canCompare"
-          :title="compareTitle"
-          :aria-label="compareTitle"
-          class="flex w-9 shrink-0 items-center justify-center rounded-md border border-zinc-300 text-zinc-600 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-          @click="comparisonStore.runComparison(destPath)"
-        >
-          <svg
-            v-if="isComparing"
-            class="h-4 w-4 animate-spin text-blue-500"
-            viewBox="0 0 24 24"
-            fill="none"
-            aria-hidden="true"
-          >
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4z" />
-          </svg>
-          <svg
-            v-else
-            class="h-4 w-4"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" />
-          </svg>
-        </button>
-        </div>
       </div>
+
+      <section
+        v-if="showSyncStatus"
+        class="space-y-2 rounded-md border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-950"
+        aria-label="Sync status"
+      >
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+          Sync status
+        </h3>
+
+        <p
+          v-if="isComparing"
+          class="text-xs text-zinc-600 dark:text-zinc-300"
+          role="status"
+          aria-live="polite"
+        >
+          {{ compareStatusText(compareProgress) }}
+        </p>
+
+        <dl v-if="result" class="space-y-1 text-sm">
+          <div class="flex items-center justify-between gap-3">
+            <dt class="text-zinc-600 dark:text-zinc-300">Total on device</dt>
+            <dd class="tabular-nums text-zinc-900 dark:text-zinc-100">{{ counts.totalOnDevice }}</dd>
+          </div>
+          <div class="flex items-center justify-between gap-3">
+            <dt class="text-emerald-700 dark:text-emerald-400">Already on PC</dt>
+            <dd class="tabular-nums text-emerald-700 dark:text-emerald-400">{{ counts.existing }}</dd>
+          </div>
+          <div class="flex items-center justify-between gap-3">
+            <dt class="text-blue-700 dark:text-blue-400">New</dt>
+            <dd class="tabular-nums text-blue-700 dark:text-blue-400">{{ counts.new }}</dd>
+          </div>
+          <div v-if="counts.conflicts > 0" class="flex items-center justify-between gap-3">
+            <dt class="text-amber-700 dark:text-amber-400">Conflicts</dt>
+            <dd class="tabular-nums text-amber-700 dark:text-amber-400">{{ counts.conflicts }}</dd>
+          </div>
+        </dl>
+
+        <p v-if="compareError" class="text-xs text-red-500" role="alert">{{ compareError }}</p>
+        <button
+          v-if="compareError && !isComparing"
+          type="button"
+          class="text-xs font-medium text-blue-600 underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-400"
+          @click="transferStore.runBackgroundCompare()"
+        >
+          Try again
+        </button>
+
+        <button
+          v-if="result"
+          type="button"
+          :disabled="!canSyncNew"
+          class="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500"
+          @click="syncNewPhotos()"
+        >
+          Sync New Photos ({{ counts.new }})
+        </button>
+        <p v-if="result && counts.conflicts > 0" class="text-[11px] text-zinc-500 dark:text-zinc-400">
+          Conflicts are left as they are. Select them in the grid and use Transfer Selected.
+        </p>
+      </section>
 
       <fieldset :disabled="isRunning">
         <legend class="mb-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">Format</legend>
@@ -201,7 +248,7 @@ async function onTransfer(): Promise<void> {
         <button
           type="submit"
           :disabled="!canTransfer"
-          class="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400 dark:focus-visible:ring-offset-zinc-900 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500"
+          class="w-full rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-800"
         >
           {{
             isRunning

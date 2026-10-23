@@ -212,6 +212,7 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
           :selected="selectedIds.has(photo.id)"
           :thumb-url="thumbUrlFor(photo)"
           :thumb-failed="store.failedThumbnails.has(photo.id)"
+          :sync-status="store.syncStatusFor(photo.id)"
           @select="onSelect(photo.id, $event)"
           @visible="loadThumbnail(photo.id)"
         />

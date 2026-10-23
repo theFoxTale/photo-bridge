@@ -39,26 +39,5 @@ export interface CompareProgress {
   phase: ComparePhase
 }
 
-export type CompareFilter = 'all' | 'new' | 'existing' | 'conflicts' | 'missing'
-
-/** What to do with photos that conflict with a different local file. */
-export type ConflictResolution = 'skip' | 'overwrite' | 'keepBoth'
-
-export type ComparisonStatus = 'new' | 'existing' | 'conflict' | 'missing'
-
-/** One line of the comparison table. */
-export interface ComparisonRow {
-  /** Unique within a result: `device:<photo id>` or `local:<path>`. */
-  key: string
-  status: ComparisonStatus
-  filename: string
-  /** ISO 8601 */
-  date: string
-  size: number
-  /** The device photo; null for files that exist only on the PC. */
-  photo: Photo | null
-  /** The matching local file (conflicts) or the file itself (missing on PC). */
-  localPath: string | null
-  /** Why the row is a conflict. */
-  reason: string | null
-}
+/** How a device photo relates to the folder last compared. */
+export type SyncStatus = 'synced' | 'new' | 'conflict' | 'unknown'

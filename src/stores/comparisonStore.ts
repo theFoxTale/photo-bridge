@@ -1,28 +1,17 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
-import type {
-  CompareFilter,
-  CompareProgress,
-  CompareResult,
-  ComparePhase,
-  ComparisonRow,
-  ComparisonStatus,
-  ConflictResolution,
-} from '../types/compare'
+import type { ComparePhase, CompareProgress, CompareResult } from '../types/compare'
 import { useDeviceStore } from './deviceStore'
-import { usePhotoStore } from './photoStore'
-import { useTransferStore } from './transferStore'
 
 type WailsApp = NonNullable<NonNullable<NonNullable<Window['go']>['main']>['App']>
 
 const PROGRESS_EVENT = 'compare:progress'
 const PHASES: readonly ComparePhase[] = ['scanning', 'listing', 'hashing', 'done']
 
-const FILTER_STATUS: Record<Exclude<CompareFilter, 'all'>, ComparisonStatus> = {
-  new: 'new',
-  existing: 'existing',
-  conflicts: 'conflict',
-  missing: 'missing',
+interface CompareRequest {
+  id: number
+  folder: string
+  deviceId: string
 }
 
 function getApi(): WailsApp {
@@ -51,29 +40,14 @@ function isCompareProgress(value: unknown): value is CompareProgress {
 }
 
 export const useComparisonStore = defineStore('comparison', () => {
-  /** Whether the comparison view is showing. */
-  const isOpen = ref(false)
   const isRunning = ref(false)
-  /** True between pressing Cancel and the backend acknowledging it. */
-  const isCancelling = ref(false)
-  /** The last run was stopped by the user, so there is no result. */
-  const wasCancelled = ref(false)
-  /** Files were transferred after the comparison, so the result is outdated. */
-  const isStale = ref(false)
-  const isChoosingFolder = ref(false)
   const result = ref<CompareResult | null>(null)
-  const filter = ref<CompareFilter>('all')
-  const localPath = ref('')
   /** The folder `result` was computed for. */
   const comparedPath = ref('')
   const progress = ref<CompareProgress | null>(null)
   const error = ref<string | null>(null)
-  const conflictResolution = ref<ConflictResolution>('skip')
-  const selectedKeys = ref<Set<string>>(new Set())
 
   const deviceStore = useDeviceStore()
-  const photoStore = usePhotoStore()
-  const transferStore = useTransferStore()
 
   // The store lives as long as the app, so the subscription is never removed.
   // `window.runtime` is missing outside the Wails shell; then no progress arrives.
@@ -83,288 +57,136 @@ export const useComparisonStore = defineStore('comparison', () => {
     }
   })
 
-  const rows = computed<ComparisonRow[]>(() => {
+  const counts = computed(() => {
     const current = result.value
-    if (!current) return []
-    return [
-      ...current.newOnDevice.map<ComparisonRow>((photo) => ({
-        key: `device:${photo.id}`,
-        status: 'new',
-        filename: photo.filename,
-        date: photo.date,
-        size: photo.size,
-        photo,
-        localPath: null,
-        reason: null,
-      })),
-      ...current.conflicts.map<ComparisonRow>((conflict) => ({
-        key: `device:${conflict.photo.id}`,
-        status: 'conflict',
-        filename: conflict.photo.filename,
-        date: conflict.photo.date,
-        size: conflict.photo.size,
-        photo: conflict.photo,
-        localPath: conflict.localPath,
-        reason: conflict.reason,
-      })),
-      ...current.alreadyOnPc.map<ComparisonRow>((photo) => ({
-        key: `device:${photo.id}`,
-        status: 'existing',
-        filename: photo.filename,
-        date: photo.date,
-        size: photo.size,
-        photo,
-        localPath: null,
-        reason: null,
-      })),
-      ...current.missingOnPc.map<ComparisonRow>((file) => ({
-        key: `local:${file.path}`,
-        status: 'missing',
-        filename: file.filename,
-        date: file.modTime,
-        size: file.size,
-        photo: null,
-        localPath: file.path,
-        reason: null,
-      })),
-    ]
-  })
-
-  const counts = computed<Record<CompareFilter, number>>(() => {
-    const current = result.value
+    const fresh = current?.newOnDevice.length ?? 0
+    const existing = current?.alreadyOnPc.length ?? 0
+    const conflicts = current?.conflicts.length ?? 0
     return {
-      all: rows.value.length,
-      new: current?.newOnDevice.length ?? 0,
-      existing: current?.alreadyOnPc.length ?? 0,
-      conflicts: current?.conflicts.length ?? 0,
-      missing: current?.missingOnPc.length ?? 0,
+      totalOnDevice: fresh + existing + conflicts,
+      new: fresh,
+      existing,
+      conflicts,
     }
   })
 
-  const visibleRows = computed<ComparisonRow[]>(() => {
-    if (filter.value === 'all') return rows.value
-    const wanted = FILTER_STATUS[filter.value]
-    return rows.value.filter((row) => row.status === wanted)
-  })
+  // One scan at a time. A newer request cancels the current one and the loop
+  // restarts with that request, so picking another folder does not wait out
+  // the previous folder.
+  let latest: CompareRequest | null = null
+  let scanning = false
+  let nextRequestId = 0
 
-  const selectedRows = computed<ComparisonRow[]>(() =>
-    rows.value.filter((row) => selectedKeys.value.has(row.key)),
-  )
-
-  function open(): void {
-    if (localPath.value.trim() === '') {
-      localPath.value = transferStore.destPath
-    }
-    isOpen.value = true
-  }
-
-  function close(): void {
-    isOpen.value = false
-  }
-
-  function setFilter(next: CompareFilter): void {
-    filter.value = next
-  }
-
-  function clearSelection(): void {
-    if (selectedKeys.value.size > 0) selectedKeys.value = new Set()
-  }
-
-  function toggleRow(key: string): void {
-    const next = new Set(selectedKeys.value)
-    if (next.has(key)) {
-      next.delete(key)
-    } else {
-      next.add(key)
-    }
-    selectedKeys.value = next
-  }
-
-  /** Selects or deselects every row of the current filter. */
-  function setVisibleSelected(selected: boolean): void {
-    const next = new Set(selectedKeys.value)
-    for (const row of visibleRows.value) {
-      if (selected) {
-        next.add(row.key)
-      } else {
-        next.delete(row.key)
-      }
-    }
-    selectedKeys.value = next
+  /** False once a newer folder, a newer request, or a device change has taken over. */
+  function stillCurrent(target: CompareRequest): boolean {
+    return (
+      latest !== null &&
+      latest.id === target.id &&
+      deviceStore.activeDeviceId === target.deviceId
+    )
   }
 
   /**
-   * Picks the folder to compare with. The transfer destination follows, so
-   * transfers started from the comparison land in the folder that was compared.
+   * Compares the active device's camera roll with `folder`. Safe to call
+   * again while a comparison is running: the newer folder and device win.
+   * A repeat scan of the same folder keeps the previous result until the new
+   * one arrives, so the grid does not flicker.
    */
-  async function chooseLocalFolder(): Promise<void> {
-    if (isChoosingFolder.value || isRunning.value) return
-    isChoosingFolder.value = true
-    try {
-      const chosen = await getApi().SelectFolder()
-      if (chosen !== '') {
-        localPath.value = chosen
-        transferStore.destPath = chosen
-        error.value = null
-      }
-    } catch (err) {
-      error.value = toMessage(err)
-    } finally {
-      isChoosingFolder.value = false
-    }
-  }
-
-  /**
-   * Compares the active device with `path` (or the current `localPath`) and
-   * opens the comparison view. Does nothing while a comparison is running.
-   */
-  async function runComparison(path?: string): Promise<void> {
-    if (isRunning.value) return
-    isOpen.value = true
-    if (path !== undefined) localPath.value = path
-    error.value = null
-    wasCancelled.value = false
-
-    const folder = localPath.value.trim()
-    if (folder === '') {
-      error.value = 'Choose a folder to compare with.'
-      return
-    }
+  async function runComparison(folder: string): Promise<void> {
     const deviceId = deviceStore.activeDeviceId
-    if (deviceId === null) {
-      error.value = 'No device is connected.'
+    const trimmed = folder.trim()
+    if (deviceId === null || trimmed === '') {
+      error.value = deviceId === null ? 'No device is connected.' : 'Choose a folder to compare with.'
       return
     }
 
-    result.value = null
-    isStale.value = false
-    clearSelection()
-    isRunning.value = true
-    isCancelling.value = false
-    progress.value = { scanned: 0, total: 0, phase: 'scanning' }
+    latest = { id: ++nextRequestId, folder: trimmed, deviceId }
+    if (comparedPath.value !== '' && comparedPath.value !== trimmed) {
+      result.value = null
+      comparedPath.value = ''
+    }
+    error.value = null
+
+    if (scanning) {
+      try {
+        await getApi().CancelCompare()
+      } catch {
+        // The scan already in progress notices the new request and restarts.
+      }
+      return
+    }
+
+    scanning = true
+    let slotRetries = 0
     try {
-      const outcome = await getApi().CompareFolder(deviceId, folder)
-      // The device may have been swapped while the comparison ran.
-      if (deviceStore.activeDeviceId !== deviceId) return
-      result.value = outcome
-      comparedPath.value = folder
-    } catch (err) {
-      if (isCancelling.value) {
-        wasCancelled.value = true
-      } else {
-        error.value = toMessage(err)
+      while (latest !== null && deviceStore.activeDeviceId === latest.deviceId) {
+        const target = latest
+        if (comparedPath.value !== '' && comparedPath.value !== target.folder) {
+          result.value = null
+          comparedPath.value = ''
+        }
+
+        isRunning.value = true
+        progress.value = { scanned: 0, total: 0, phase: 'scanning' }
+        try {
+          const outcome = await getApi().CompareFolder(target.deviceId, target.folder)
+          if (!stillCurrent(target)) continue
+          result.value = outcome
+          comparedPath.value = target.folder
+          error.value = null
+          break
+        } catch (err) {
+          if (!stillCurrent(target)) continue
+          const message = toMessage(err)
+          // The backend slot can still be held for a moment after a cancel.
+          if (message.includes('already running') && slotRetries < 2) {
+            slotRetries++
+            try {
+              await getApi().CancelCompare()
+            } catch {
+              // The following attempt reports the error if the slot stays taken.
+            }
+            continue
+          }
+          slotRetries = 0
+          if (message.includes('comparison cancelled')) break
+          error.value = message
+          break
+        }
       }
     } finally {
+      scanning = false
       isRunning.value = false
-      isCancelling.value = false
       progress.value = null
     }
   }
 
-  /** Asks the backend to stop; the running `runComparison` then settles as cancelled. */
-  async function cancelComparison(): Promise<void> {
-    if (!isRunning.value || isCancelling.value) return
-    isCancelling.value = true
-    try {
-      await getApi().CancelCompare()
-    } catch (err) {
-      isCancelling.value = false
-      error.value = toMessage(err)
-    }
-  }
-
-  /**
-   * Transfers the device photos among `chosen` to the compared folder. Photos
-   * in conflict follow `conflictResolution`: skipped, replacing the local file,
-   * or saved next to it.
-   */
-  async function transferRows(chosen: ComparisonRow[]): Promise<void> {
-    const ids: string[] = []
-    const overwrite: Record<string, string> = {}
-    for (const row of chosen) {
-      if (!row.photo) continue
-      if (row.status === 'conflict') {
-        if (conflictResolution.value === 'skip') continue
-        if (conflictResolution.value === 'overwrite' && row.localPath) {
-          overwrite[row.photo.id] = row.localPath
-        }
-      }
-      ids.push(row.photo.id)
-    }
-    if (ids.length === 0 || comparedPath.value === '') return
-
-    transferStore.destPath = comparedPath.value
-    photoStore.selectIds(ids)
-    await transferStore.startTransfer(ids, Object.keys(overwrite).length > 0 ? overwrite : undefined)
-  }
-
-  /** Transfers every photo that is new on the device. */
-  function transferNew(): Promise<void> {
-    return transferRows(rows.value.filter((row) => row.status === 'new'))
-  }
-
-  /** Transfers new photos plus the conflicts, resolved as `conflictResolution` says. */
-  function transferNewAndConflicts(): Promise<void> {
-    return transferRows(rows.value.filter((row) => row.status === 'new' || row.status === 'conflict'))
-  }
-
-  /** Transfers the rows ticked in the table. */
-  function transferSelected(): Promise<void> {
-    return transferRows(selectedRows.value)
-  }
-
-  // A result belongs to one device.
+  // A result belongs to one device. Drop it immediately so the grid does not
+  // keep the previous phone's checkmarks. A scan that this same change already
+  // started for the new device is left running.
   watch(
     () => deviceStore.activeDeviceId,
-    () => {
+    (deviceId) => {
+      const scanIsForThisDevice = latest !== null && latest.deviceId === deviceId
+      if (!scanIsForThisDevice) {
+        latest = null
+        if (scanning) {
+          void getApi().CancelCompare().catch(() => undefined)
+        }
+      }
       result.value = null
       comparedPath.value = ''
-      isStale.value = false
-      wasCancelled.value = false
-      clearSelection()
-    },
-  )
-
-  // After files were copied the result no longer describes the folder.
-  watch(
-    () => transferStore.isRunning,
-    (running, wasRunning) => {
-      if (wasRunning && !running && result.value && (transferStore.result?.succeeded.length ?? 0) > 0) {
-        isStale.value = true
-      }
+      error.value = null
     },
   )
 
   return {
-    isOpen,
     isRunning,
-    isCancelling,
-    isChoosingFolder,
-    wasCancelled,
-    isStale,
     result,
-    filter,
-    localPath,
     comparedPath,
     progress,
     error,
-    conflictResolution,
-    selectedKeys,
-    rows,
     counts,
-    visibleRows,
-    selectedRows,
-    open,
-    close,
-    setFilter,
-    toggleRow,
-    setVisibleSelected,
-    clearSelection,
-    chooseLocalFolder,
     runComparison,
-    cancelComparison,
-    transferNew,
-    transferNewAndConflicts,
-    transferSelected,
   }
 })
