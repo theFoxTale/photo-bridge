@@ -523,13 +523,14 @@ func (l *AFCPhotoLibrary) FetchAlbums(deviceID string) ([]Album, error) {
 	return albums, nil
 }
 
-// rollDisplayName turns "100APPLE" into "Roll 100".
+// rollDisplayName turns "100APPLE" into "Folder 100". The album ID stays
+// "roll-100APPLE"; only the sidebar label changes.
 func rollDisplayName(roll string) string {
 	digits := strings.TrimRight(roll, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_")
 	if digits == "" {
 		return roll
 	}
-	return "Roll " + digits
+	return "Folder " + digits
 }
 
 // albumDir resolves an album ID to its AFC directory.

@@ -73,7 +73,7 @@ func TestDateFromFilename(t *testing.T) {
 }
 
 func TestRollDisplayName(t *testing.T) {
-	if got := rollDisplayName("100APPLE"); got != "Roll 100" {
+	if got := rollDisplayName("100APPLE"); got != "Folder 100" {
 		t.Errorf("got %q", got)
 	}
 	if got := rollDisplayName("APPLE"); got != "APPLE" {

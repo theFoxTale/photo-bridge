@@ -1,6 +1,12 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import { useDeviceDiscovery } from '../../composables/useDeviceDiscovery'
 import { usePhotoLibrary } from '../../composables/usePhotoLibrary'
+import type { Album } from '../../types/album'
+
+const DEVICE_FOLDERS_KEY = 'photobridge.deviceFoldersExpanded'
+const CAMERA_ROLL_ID = 'camera-roll'
+const DEVICE_FOLDER_PREFIX = 'roll-'
 
 const { devices, status, activeDeviceId, activeDevice, error, refresh, selectDevice } =
   useDeviceDiscovery()
@@ -10,6 +16,69 @@ const {
   isLoading: isLoadingLibrary,
   selectAlbum,
 } = usePhotoLibrary()
+
+function readDeviceFoldersExpanded(): boolean {
+  try {
+    return localStorage.getItem(DEVICE_FOLDERS_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+const deviceFoldersExpanded = ref(readDeviceFoldersExpanded())
+
+function toggleDeviceFolders(): void {
+  deviceFoldersExpanded.value = !deviceFoldersExpanded.value
+  try {
+    localStorage.setItem(DEVICE_FOLDERS_KEY, deviceFoldersExpanded.value ? '1' : '0')
+  } catch {
+    // The section still opens for this session when storage is blocked.
+  }
+}
+
+const cameraRoll = computed(
+  () => albums.value.find((album) => album.id === CAMERA_ROLL_ID) ?? null,
+)
+
+const deviceFolders = computed(() =>
+  albums.value.filter((album) => album.id.startsWith(DEVICE_FOLDER_PREFIX)),
+)
+
+const otherAlbums = computed(() =>
+  albums.value.filter(
+    (album) => album.id !== CAMERA_ROLL_ID && !album.id.startsWith(DEVICE_FOLDER_PREFIX),
+  ),
+)
+
+type SidebarRow =
+  | { kind: 'album'; id: string; album: Album; nested: boolean }
+  | { kind: 'toggle'; id: 'device-folders' }
+
+const sidebarRows = computed((): SidebarRow[] => {
+  const rows: SidebarRow[] = []
+  if (cameraRoll.value) {
+    rows.push({ kind: 'album', id: cameraRoll.value.id, album: cameraRoll.value, nested: false })
+  }
+  if (deviceFolders.value.length > 0) {
+    rows.push({ kind: 'toggle', id: 'device-folders' })
+    if (deviceFoldersExpanded.value) {
+      for (const album of deviceFolders.value) {
+        rows.push({ kind: 'album', id: album.id, album, nested: true })
+      }
+    }
+  }
+  for (const album of otherAlbums.value) {
+    rows.push({ kind: 'album', id: album.id, album, nested: false })
+  }
+  return rows
+})
+
+function albumClass(id: string): string {
+  if (id === activeAlbumId.value) {
+    return 'bg-blue-500/10 font-medium text-blue-700 dark:text-blue-300'
+  }
+  return 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'
+}
 </script>
 
 <template>
@@ -219,17 +288,41 @@ const {
             No albums
           </p>
           <ul v-else class="ml-2 space-y-0.5 border-l border-zinc-200 pl-2 dark:border-zinc-800">
-            <li v-for="album in albums" :key="album.id">
+            <li
+              v-for="row in sidebarRows"
+              :key="row.id"
+              :class="row.kind === 'album' && row.nested ? 'pl-3' : ''"
+            >
               <button
+                v-if="row.kind === 'toggle'"
+                type="button"
+                class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-medium text-zinc-500 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                :aria-expanded="deviceFoldersExpanded"
+                @click="toggleDeviceFolders"
+              >
+                <svg
+                  class="h-3.5 w-3.5 shrink-0 transition-transform"
+                  :class="deviceFoldersExpanded ? 'rotate-90' : ''"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+                <span class="min-w-0 flex-1 truncate">Device Folders (Advanced)</span>
+                <span class="shrink-0 tabular-nums">{{ deviceFolders.length }}</span>
+              </button>
+              <button
+                v-else
                 type="button"
                 class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                :class="
-                  album.id === activeAlbumId
-                    ? 'bg-blue-500/10 font-medium text-blue-700 dark:text-blue-300'
-                    : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'
-                "
-                :aria-current="album.id === activeAlbumId ? 'true' : undefined"
-                @click="selectAlbum(album.id)"
+                :class="albumClass(row.album.id)"
+                :aria-current="row.album.id === activeAlbumId ? 'true' : undefined"
+                @click="selectAlbum(row.album.id)"
               >
                 <svg
                   class="h-4 w-4 shrink-0"
@@ -243,9 +336,9 @@ const {
                 >
                   <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
                 </svg>
-                <span class="min-w-0 flex-1 truncate">{{ album.name }}</span>
+                <span class="min-w-0 flex-1 truncate">{{ row.album.name }}</span>
                 <span class="shrink-0 text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
-                  {{ album.count }}
+                  {{ row.album.count }}
                 </span>
               </button>
             </li>
