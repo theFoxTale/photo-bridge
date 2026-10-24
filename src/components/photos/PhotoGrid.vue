@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { storeToRefs } from 'pinia'
 import { computed } from 'vue'
 import { useDeviceDiscovery } from '../../composables/useDeviceDiscovery'
 import { usePhotoLibrary } from '../../composables/usePhotoLibrary'
@@ -25,6 +26,8 @@ const {
   clearSelection,
   loadThumbnail,
 } = usePhotoLibrary()
+
+const { groupedPhotos } = storeToRefs(store)
 
 const albumName = computed(
   () => albums.value.find((album) => album.id === activeAlbumId.value)?.name ?? 'Photos',
@@ -96,7 +99,8 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
       Demo mode — showing sample photos
     </div>
 
-    <div class="min-h-0 flex-1 overflow-y-auto p-4">
+    <div class="min-h-0 flex-1 overflow-y-auto">
+      <div class="flex min-h-full flex-col p-4">
       <!-- Loading -->
       <div
         v-if="isLoading || isSearchingDevice"
@@ -113,7 +117,7 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
       <!-- Device disconnected -->
       <div
         v-else-if="activeDeviceId === null && disconnected"
-        class="flex h-full flex-col items-center justify-center text-center"
+        class="flex flex-1 flex-col items-center justify-center text-center"
         role="status"
       >
         <svg
@@ -138,7 +142,7 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
       <!-- No device -->
       <div
         v-else-if="activeDeviceId === null"
-        class="flex h-full flex-col items-center justify-center text-center"
+        class="flex flex-1 flex-col items-center justify-center text-center"
       >
         <svg
           class="mb-3 h-12 w-12 text-zinc-400 dark:text-zinc-600"
@@ -163,7 +167,7 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
       <!-- Error -->
       <div
         v-else-if="error"
-        class="flex h-full flex-col items-center justify-center px-6 text-center"
+        class="flex flex-1 flex-col items-center justify-center px-6 text-center"
         role="alert"
       >
         <svg
@@ -195,7 +199,7 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
       <!-- Empty album -->
       <div
         v-else-if="photos.length === 0"
-        class="flex h-full flex-col items-center justify-center text-center"
+        class="flex flex-1 flex-col items-center justify-center text-center"
       >
         <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">This album is empty</p>
         <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
@@ -203,19 +207,29 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
         </p>
       </div>
 
-      <!-- Grid -->
-      <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
-        <PhotoTile
-          v-for="photo in photos"
-          :key="photo.id"
-          :photo="photo"
-          :selected="selectedIds.has(photo.id)"
-          :thumb-url="thumbUrlFor(photo)"
-          :thumb-failed="store.failedThumbnails.has(photo.id)"
-          :sync-status="store.syncStatusFor(photo.id)"
-          @select="onSelect(photo.id, $event)"
-          @visible="loadThumbnail(photo.id)"
-        />
+      <!-- Timeline -->
+      <div v-else class="space-y-6">
+        <section v-for="group in groupedPhotos" :key="group.dateLabel" :aria-label="group.dateLabel">
+          <h3
+            class="sticky top-0 z-10 -mx-4 mb-3 bg-zinc-50/90 px-4 py-2 text-sm font-medium text-zinc-800 backdrop-blur dark:bg-zinc-950/90 dark:text-zinc-100"
+          >
+            {{ group.dateLabel }}
+          </h3>
+          <div class="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
+            <PhotoTile
+              v-for="photo in group.photos"
+              :key="photo.id"
+              :photo="photo"
+              :selected="selectedIds.has(photo.id)"
+              :thumb-url="thumbUrlFor(photo)"
+              :thumb-failed="store.failedThumbnails.has(photo.id)"
+              :sync-status="store.syncStatusFor(photo.id)"
+              @select="onSelect(photo.id, $event)"
+              @visible="loadThumbnail(photo.id)"
+            />
+          </div>
+        </section>
+      </div>
       </div>
     </div>
   </section>

@@ -21,6 +21,38 @@ function toMessage(err: unknown): string {
   return 'Unknown error'
 }
 
+export interface PhotoGroup {
+  dateLabel: string
+  photos: Photo[]
+}
+
+const dayLabel = new Intl.DateTimeFormat(undefined, {
+  month: 'long',
+  day: 'numeric',
+  year: 'numeric',
+})
+
+/** Local midnight for `date`, so photos group by the day the user sees. */
+function startOfLocalDay(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+}
+
+function parsePhotoDate(value: string): Date | null {
+  const trimmed = value.trim()
+  if (trimmed === '') return null
+  const parsed = new Date(trimmed)
+  if (Number.isNaN(parsed.getTime())) return null
+  return parsed
+}
+
+function labelForDay(dayStart: number, todayStart: number): string {
+  if (dayStart === todayStart) return 'Today'
+  const yesterday = new Date(todayStart)
+  yesterday.setDate(yesterday.getDate() - 1)
+  if (dayStart === yesterday.getTime()) return 'Yesterday'
+  return dayLabel.format(new Date(dayStart))
+}
+
 export const usePhotoStore = defineStore('photo', () => {
   const albums = ref<Album[]>([])
   const photos = ref<Photo[]>([])
@@ -42,6 +74,40 @@ export const usePhotoStore = defineStore('photo', () => {
   const isLoading = computed(() => pending.value > 0)
 
   const selectedCount = computed(() => selectedIds.value.size)
+
+  /** Photos grouped by local calendar day, newest day first. Undated photos are last. */
+  const groupedPhotos = computed((): PhotoGroup[] => {
+    const todayStart = startOfLocalDay(new Date())
+    const buckets = new Map<number, Photo[]>()
+    const unknown: Photo[] = []
+
+    for (const photo of photos.value) {
+      const parsed = parsePhotoDate(photo.date)
+      if (parsed === null) {
+        unknown.push(photo)
+        continue
+      }
+      const day = startOfLocalDay(parsed)
+      const list = buckets.get(day)
+      if (list) {
+        list.push(photo)
+      } else {
+        buckets.set(day, [photo])
+      }
+    }
+
+    const groups: PhotoGroup[] = [...buckets.entries()]
+      .sort((a, b) => b[0] - a[0])
+      .map(([day, dayPhotos]) => ({
+        dateLabel: labelForDay(day, todayStart),
+        photos: dayPhotos,
+      }))
+
+    if (unknown.length > 0) {
+      groups.push({ dateLabel: 'Unknown Date', photos: unknown })
+    }
+    return groups
+  })
 
   // Photo id -> sync status for the latest comparison. Read inside the computed
   // so this store and the comparison store can be created in either order.
@@ -233,6 +299,7 @@ export const usePhotoStore = defineStore('photo', () => {
     thumbnailCache,
     failedThumbnails,
     selectedCount,
+    groupedPhotos,
     syncStatusFor,
     loadAlbums,
     loadPhotos,
