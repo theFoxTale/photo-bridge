@@ -5,16 +5,127 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"time"
 
 	exif "github.com/dsoprea/go-exif/v3"
 )
 
 const (
-	exifTagOrientation  = 0x0112
-	exifTypeShort       = 3
-	exifIFDEntrySize    = 12
-	jpegMaxSegmentBytes = 65535 // a segment length field counts itself (2 bytes)
+	exifTagOrientation       = 0x0112
+	exifTagDateTime          = 0x0132
+	exifTagExifIFD           = 0x8769
+	exifTagDateTimeOriginal  = 0x9003
+	exifTagDateTimeDigitized = 0x9004
+	exifTypeASCII            = 2
+	exifTypeShort            = 3
+	exifTypeLong             = 4
+	exifIFDEntrySize         = 12
+	jpegMaxSegmentBytes      = 65535 // a segment length field counts itself (2 bytes)
 )
+
+// exifTimestamp returns the capture time stored in a TIFF EXIF block.
+// DateTimeOriginal is preferred, then DateTimeDigitized, then DateTime.
+func exifTimestamp(raw []byte) (time.Time, bool) {
+	header, err := exif.ParseExifHeader(raw)
+	if err != nil {
+		return time.Time{}, false
+	}
+	order := header.ByteOrder
+	ifd := int(header.FirstIfdOffset)
+	if off, ok := ifdLong(raw, order, ifd, exifTagExifIFD); ok {
+		if t, ok := ifdASCIITime(raw, order, off, exifTagDateTimeOriginal); ok {
+			return t, true
+		}
+		if t, ok := ifdASCIITime(raw, order, off, exifTagDateTimeDigitized); ok {
+			return t, true
+		}
+	}
+	if t, ok := ifdASCIITime(raw, order, ifd, exifTagDateTime); ok {
+		return t, true
+	}
+	return time.Time{}, false
+}
+
+func ifdLong(raw []byte, order binary.ByteOrder, ifd int, tag uint16) (int, bool) {
+	var value int
+	found := false
+	if !eachIFDEntry(raw, order, ifd, func(entry int) bool {
+		if order.Uint16(raw[entry:]) != tag {
+			return true
+		}
+		if order.Uint16(raw[entry+2:]) != exifTypeLong || order.Uint32(raw[entry+4:]) != 1 {
+			return false
+		}
+		value = int(order.Uint32(raw[entry+8:]))
+		found = true
+		return false
+	}) {
+		return 0, false
+	}
+	return value, found
+}
+
+func ifdASCIITime(raw []byte, order binary.ByteOrder, ifd int, tag uint16) (time.Time, bool) {
+	var parsed time.Time
+	found := false
+	if !eachIFDEntry(raw, order, ifd, func(entry int) bool {
+		if order.Uint16(raw[entry:]) != tag {
+			return true
+		}
+		text, ok := entryASCII(raw, order, entry)
+		if !ok {
+			return false
+		}
+		t, err := time.Parse("2006:01:02 15:04:05", text)
+		if err != nil {
+			return false
+		}
+		parsed = t.UTC()
+		found = true
+		return false
+	}) {
+		return time.Time{}, false
+	}
+	return parsed, found
+}
+
+func eachIFDEntry(raw []byte, order binary.ByteOrder, ifd int, visit func(entry int) bool) bool {
+	if ifd < 0 || ifd+2 > len(raw) {
+		return false
+	}
+	count := int(order.Uint16(raw[ifd:]))
+	base := ifd + 2
+	if base > len(raw) || count > (len(raw)-base)/exifIFDEntrySize {
+		return false
+	}
+	for i := 0; i < count; i++ {
+		if !visit(base + i*exifIFDEntrySize) {
+			return true
+		}
+	}
+	return true
+}
+
+func entryASCII(raw []byte, order binary.ByteOrder, entry int) (string, bool) {
+	if order.Uint16(raw[entry+2:]) != exifTypeASCII {
+		return "", false
+	}
+	count := int(order.Uint32(raw[entry+4:]))
+	if count <= 0 || count > 32 {
+		return "", false
+	}
+	var buf []byte
+	if count <= 4 {
+		buf = raw[entry+8 : entry+8+count]
+	} else {
+		off := int(order.Uint32(raw[entry+8:]))
+		if off < 0 || off+count > len(raw) {
+			return "", false
+		}
+		buf = raw[off : off+count]
+	}
+	return string(bytes.TrimRight(buf, "\x00")), true
+}
 
 // exifAPP1Prefix introduces EXIF data inside a JPEG APP1 segment.
 var exifAPP1Prefix = []byte("Exif\x00\x00")

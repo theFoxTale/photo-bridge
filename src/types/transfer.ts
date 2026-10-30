@@ -1,3 +1,6 @@
+/** How transferred files are arranged under the destination folder. */
+export type FolderStructure = 'flat' | 'year_month' | 'year_month_day'
+
 /** Mirrors the Go `backend.TransferOptions` struct (see backend/transfer.go). */
 export interface TransferOptions {
   saveOriginal: boolean
@@ -5,6 +8,8 @@ export interface TransferOptions {
   /** 1-100 */
   jpgQuality: number
   destPath: string
+  /** `flat` keeps every file in the destination. Dated values add subfolders. */
+  folderStructure: FolderStructure
   /**
    * Photo ID -> existing file inside `destPath` that the original replaces.
    * Photos not listed keep both files (the new one gets a `_1` suffix).

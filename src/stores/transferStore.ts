@@ -54,6 +54,7 @@ export const useTransferStore = defineStore('transfer', () => {
     saveOriginal: true,
     saveJpg: false,
     jpgQuality: 95,
+    folderStructure: 'year_month',
   })
 
   const deviceStore = useDeviceStore()

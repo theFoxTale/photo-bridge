@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -90,7 +91,9 @@ func (l *fakeLibrary) add(id, filename, format string, data []byte) {
 	l.data[id] = data
 }
 
-func (l *fakeLibrary) Albums(context.Context, string) ([]Album, error) { return nil, errors.New("unused") }
+func (l *fakeLibrary) Albums(context.Context, string) ([]Album, error) {
+	return nil, errors.New("unused")
+}
 func (l *fakeLibrary) Photos(ctx context.Context, _, albumID string) ([]Photo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -215,6 +218,7 @@ func TestValidateTransfer(t *testing.T) {
 		{"no destination", "dev", []string{"a"}, func(o TransferOptions) TransferOptions { o.DestPath = " "; return o }, "destination folder"},
 		{"missing destination", "dev", []string{"a"}, func(o TransferOptions) TransferOptions { o.DestPath = filepath.Join(dir, "nope"); return o }, "does not exist"},
 		{"destination is a file", "dev", []string{"a"}, func(o TransferOptions) TransferOptions { o.DestPath = file; return o }, "not a folder"},
+		{"bad folder structure", "dev", []string{"a"}, func(o TransferOptions) TransferOptions { o.FolderStructure = "nope"; return o }, "folder structure"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -692,4 +696,145 @@ func TestValidateOverwritePaths(t *testing.T) {
 			}
 		})
 	}
+}
+
+// datedExif is a little-endian EXIF block whose DateTimeOriginal is
+// 2021-04-15 12:00:00.
+func datedExif() []byte {
+	const (
+		exifIFD = 26
+		textAt  = 44
+	)
+	raw := make([]byte, textAt+20)
+	copy(raw, []byte{'I', 'I', 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00})
+	binary.LittleEndian.PutUint16(raw[10:], 0x8769)
+	binary.LittleEndian.PutUint16(raw[12:], 4)
+	binary.LittleEndian.PutUint32(raw[14:], 1)
+	binary.LittleEndian.PutUint32(raw[18:], exifIFD)
+	raw[exifIFD] = 1
+	binary.LittleEndian.PutUint16(raw[28:], 0x9003)
+	binary.LittleEndian.PutUint16(raw[30:], 2)
+	binary.LittleEndian.PutUint32(raw[32:], 20)
+	binary.LittleEndian.PutUint32(raw[36:], textAt)
+	copy(raw[textAt:], []byte("2021:04:15 12:00:00\x00"))
+	return raw
+}
+
+func TestExifTimestampDateTimeOriginal(t *testing.T) {
+	got, ok := exifTimestamp(datedExif())
+	if !ok {
+		t.Fatal("expected a capture time")
+	}
+	want := time.Date(2021, 4, 15, 12, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if _, ok := exifTimestamp(testExif()); ok {
+		t.Fatal("an orientation-only block has no capture time")
+	}
+}
+
+func TestRunTransferFolderStructure(t *testing.T) {
+	const id = "100APPLE/IMG_0001.HEIC"
+
+	transfer := func(t *testing.T, filename, date string, data []byte, structure string) (string, *fakeLibrary) {
+		t.Helper()
+		dir := t.TempDir()
+		lib := newFakeLibrary()
+		lib.add(id, filename, "heic", data)
+		photo := lib.photos[id]
+		photo.Date = date
+		lib.photos[id] = photo
+
+		opts := baseOptions(dir)
+		opts.FolderStructure = structure
+		res, err := RunTransfer(context.Background(), lib, "dev", []string{id}, opts, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Succeeded) != 1 || len(res.Failed) != 0 {
+			t.Fatalf("result = %+v", res)
+		}
+		return dir, lib
+	}
+
+	t.Run("year and month", func(t *testing.T) {
+		data := testJPEG(t, false)
+		dir, lib := transfer(t, "IMG_0001.HEIC", "2021-04-15T08:30:00Z", data, "year_month")
+		orig := filepath.Join(dir, "2021", "04", "IMG_0001.HEIC")
+		jpg := filepath.Join(dir, "2021", "04", "IMG_0001.jpg")
+		if !bytes.Equal(readFile(t, orig), data) {
+			t.Fatal("original was not written into 2021/04")
+		}
+		if _, err := os.Stat(jpg); err != nil {
+			t.Fatalf("JPG missing from the dated folder: %v", err)
+		}
+
+		lib.mu.Lock()
+		calls := lib.downloadCalls
+		lib.mu.Unlock()
+		opts := baseOptions(dir)
+		opts.FolderStructure = "year_month"
+		if _, err := RunTransfer(context.Background(), lib, "dev", []string{id}, opts, nil); err != nil {
+			t.Fatal(err)
+		}
+		lib.mu.Lock()
+		again := lib.downloadCalls
+		lib.mu.Unlock()
+		if again != calls {
+			t.Fatalf("second run downloaded %d more times; the dated folder should count as already transferred", again-calls)
+		}
+	})
+
+	t.Run("year month and day", func(t *testing.T) {
+		dir, _ := transfer(t, "IMG_0001.HEIC", "2021-04-15T08:30:00Z", testJPEG(t, false), "year_month_day")
+		if _, err := os.Stat(filepath.Join(dir, "2021", "04", "15", "IMG_0001.HEIC")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "2021", "04", "15", "IMG_0001.jpg")); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("filename date", func(t *testing.T) {
+		dir, _ := transfer(t, "20210415_120000.HEIC", "", testJPEG(t, false), "year_month")
+		if _, err := os.Stat(filepath.Join(dir, "2021", "04", "20210415_120000.HEIC")); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("exif date", func(t *testing.T) {
+		plain := testJPEG(t, false)
+		data, err := insertExif(plain, datedExif())
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir, _ := transfer(t, "IMG_0001.HEIC", "", data, "year_month")
+		if _, err := os.Stat(filepath.Join(dir, "2021", "04", "IMG_0001.HEIC")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "2021", "04", "IMG_0001.jpg")); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("unknown date", func(t *testing.T) {
+		dir, _ := transfer(t, "IMG_0001.HEIC", "", testJPEG(t, false), "year_month")
+		if _, err := os.Stat(filepath.Join(dir, "Unknown_Date", "IMG_0001.HEIC")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "Unknown_Date", "IMG_0001.jpg")); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("flat ignores the date", func(t *testing.T) {
+		dir, _ := transfer(t, "IMG_0001.HEIC", "2021-04-15T08:30:00Z", testJPEG(t, false), "flat")
+		if _, err := os.Stat(filepath.Join(dir, "IMG_0001.HEIC")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "2021")); !os.IsNotExist(err) {
+			t.Fatal("flat layout created a dated folder")
+		}
+	})
 }

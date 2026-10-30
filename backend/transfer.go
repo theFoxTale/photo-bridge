@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -32,6 +33,10 @@ type TransferOptions struct {
 	SaveJPG      bool   `json:"saveJpg"`
 	JPGQuality   int    `json:"jpgQuality"` // 1-100
 	DestPath     string `json:"destPath"`
+	// FolderStructure is where each file is placed under DestPath.
+	// "flat" keeps everything in DestPath. "year_month" uses YYYY/MM.
+	// "year_month_day" uses YYYY/MM/DD. An empty value means "flat".
+	FolderStructure string `json:"folderStructure"`
 
 	// OverwritePaths maps a photo ID to an existing file inside DestPath that
 	// its original replaces (used to resolve comparison conflicts). Photos not
@@ -118,6 +123,14 @@ func validateTransfer(deviceID string, photoIDs []string, opts TransferOptions) 
 		return nil, opts, fmt.Errorf("destination is not a folder: %s", abs)
 	}
 	opts.DestPath = abs
+
+	switch opts.FolderStructure {
+	case "", "flat":
+		opts.FolderStructure = "flat"
+	case "year_month", "year_month_day":
+	default:
+		return nil, opts, fmt.Errorf("folder structure must be flat, year_month, or year_month_day, got %q", opts.FolderStructure)
+	}
 
 	overwrite, err := validateOverwritePaths(ids, abs, opts.OverwritePaths)
 	if err != nil {
@@ -350,7 +363,25 @@ func (r *transferRun) process(ctx context.Context, slot int, id string) error {
 	r.current = name
 	r.mu.Unlock()
 
-	plan, err := r.plan(info, name)
+	when, known := takenTime(info, name)
+	part := filepath.Join(r.tmpDir, fmt.Sprintf("worker%d.part", slot))
+	defer os.Remove(part)
+
+	// A dated folder has to be chosen before the "already there" check. When
+	// the device record and the file name have no date, the capture time may
+	// only exist in EXIF, so the file is downloaded first.
+	downloaded := false
+	if !known && r.datedFolders() {
+		if err := r.lib.Download(ctx, r.deviceID, id, part, func(n int64) { r.bytes.Add(n) }); err != nil {
+			return err
+		}
+		downloaded = true
+		if captured, ok := captureTimeFromFile(part); ok {
+			when, known = captured, true
+		}
+	}
+
+	plan, err := r.plan(info, name, when, known)
 	if err != nil {
 		return err
 	}
@@ -358,21 +389,25 @@ func (r *transferRun) process(ctx context.Context, slot int, id string) error {
 		return nil // everything is already in the destination
 	}
 
-	part := filepath.Join(r.tmpDir, fmt.Sprintf("worker%d.part", slot))
-	defer os.Remove(part)
-	if err := r.lib.Download(ctx, r.deviceID, id, part, func(n int64) { r.bytes.Add(n) }); err != nil {
-		return err
+	if !downloaded {
+		if err := r.lib.Download(ctx, r.deviceID, id, part, func(n int64) { r.bytes.Add(n) }); err != nil {
+			return err
+		}
 	}
 
 	// The original goes first: if the conversion fails, the original is
 	// still saved, and a re-run skips it and retries only the JPG.
+	stamp := info.Date
+	if known {
+		stamp = when.UTC().Format(time.RFC3339)
+	}
 	source := part
 	if plan.saveOriginal {
 		if err := os.Rename(part, plan.originalPath); err != nil {
 			return fmt.Errorf("save original: %w", err)
 		}
 		source = plan.originalPath
-		touch(plan.originalPath, info.Date)
+		touch(plan.originalPath, stamp)
 	}
 
 	if plan.saveJPG {
@@ -384,14 +419,14 @@ func (r *transferRun) process(ctx context.Context, slot int, id string) error {
 		if err := os.Rename(tmpJPG, plan.jpgPath); err != nil {
 			return fmt.Errorf("save JPG: %w", err)
 		}
-		touch(plan.jpgPath, info.Date)
+		touch(plan.jpgPath, stamp)
 	}
 	return nil
 }
 
 // plan decides which outputs a photo needs and where they go, skipping files
 // that are already present.
-func (r *transferRun) plan(info Photo, name string) (photoPlan, error) {
+func (r *transferRun) plan(info Photo, name string, when time.Time, known bool) (photoPlan, error) {
 	var p photoPlan
 
 	jpgCapable := info.Format == "heic" || info.Format == "jpeg"
@@ -406,12 +441,17 @@ func (r *transferRun) plan(info Photo, name string) (photoPlan, error) {
 		wantJPG = false
 	}
 
+	dir, err := r.outputDir(when, known)
+	if err != nil {
+		return p, err
+	}
+
 	if wantOriginal {
 		if target, ok := r.opts.OverwritePaths[info.ID]; ok {
 			// A conflict the user chose to resolve by replacing the local file.
 			p.originalPath, p.saveOriginal = target, true
 		} else {
-			path, skip, err := r.claimPath(name, func(fi fs.FileInfo) bool { return fi.Size() == info.Size })
+			path, skip, err := r.claimPath(dir, name, func(fi fs.FileInfo) bool { return fi.Size() == info.Size })
 			if err != nil {
 				return p, err
 			}
@@ -420,7 +460,7 @@ func (r *transferRun) plan(info Photo, name string) (photoPlan, error) {
 	}
 	if wantJPG {
 		stem := strings.TrimSuffix(name, filepath.Ext(name))
-		path, skip, err := r.claimPath(stem+".jpg", func(fs.FileInfo) bool { return true })
+		path, skip, err := r.claimPath(dir, stem+".jpg", func(fs.FileInfo) bool { return true })
 		if err != nil {
 			return p, err
 		}
@@ -429,11 +469,94 @@ func (r *transferRun) plan(info Photo, name string) (photoPlan, error) {
 	return p, nil
 }
 
-// claimPath picks the destination path for name. A free path is reserved and
-// returned. An existing file for which same returns true means the work is
-// already done (skip). Any other existing file, or a path claimed earlier in
-// this run, makes the search continue with "name_1.ext", "name_2.ext", ...
-func (r *transferRun) claimPath(name string, same func(fs.FileInfo) bool) (string, bool, error) {
+// datedFolders reports whether files are placed in subfolders of DestPath.
+func (r *transferRun) datedFolders() bool {
+	return r.opts.FolderStructure == "year_month" || r.opts.FolderStructure == "year_month_day"
+}
+
+// outputDir is the folder that receives this photo. Dated layouts use the
+// UTC calendar date. Photos with no usable date go to Unknown_Date.
+func (r *transferRun) outputDir(when time.Time, known bool) (string, error) {
+	if !r.datedFolders() {
+		return r.opts.DestPath, nil
+	}
+	rel := "Unknown_Date"
+	if known {
+		year, month, day := when.UTC().Date()
+		switch r.opts.FolderStructure {
+		case "year_month_day":
+			rel = fmt.Sprintf("%04d/%02d/%02d", year, int(month), day)
+		default:
+			rel = fmt.Sprintf("%04d/%02d", year, int(month))
+		}
+	}
+	dir := filepath.Join(r.opts.DestPath, filepath.FromSlash(rel))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create %s: %w", rel, err)
+	}
+	return dir, nil
+}
+
+// takenTime is the date used to choose a folder before the file is downloaded.
+// The file name wins when it contains one, because that date does not change
+// between runs. Otherwise the device timestamp is used.
+func takenTime(info Photo, name string) (time.Time, bool) {
+	if parsed := dateFromFilename(name); !parsed.IsZero() {
+		return parsed.UTC(), true
+	}
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(info.Date))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed.UTC(), true
+}
+
+// captureTimeFromFile reads a capture time from EXIF. JPEG and HEIC are
+// recognised by content. A file without a date returns false.
+func captureTimeFromFile(path string) (time.Time, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return time.Time{}, false
+	}
+	defer f.Close()
+
+	head := make([]byte, 12)
+	n, readErr := io.ReadFull(f, head)
+	if readErr != nil && !errors.Is(readErr, io.ErrUnexpectedEOF) && !errors.Is(readErr, io.EOF) {
+		return time.Time{}, false
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return time.Time{}, false
+	}
+
+	switch sniffKind(head[:n]) {
+	case kindJPEG:
+		data, err := io.ReadAll(f)
+		if err != nil {
+			return time.Time{}, false
+		}
+		raw, err := jpegExif(data)
+		if err != nil || len(raw) == 0 {
+			return time.Time{}, false
+		}
+		return exifTimestamp(raw)
+	case kindHEIF:
+		decoded, err := decodeHEIC(f)
+		if err != nil || len(decoded.exif) == 0 {
+			return time.Time{}, false
+		}
+		return exifTimestamp(decoded.exif)
+	default:
+		return time.Time{}, false
+	}
+}
+
+// claimPath picks the destination path for name inside dir. A free path is
+// reserved and returned. An existing file for which same returns true means
+// the work is already done (skip). Any other existing file, or a path claimed
+// earlier in this run, makes the search continue with "name_1.ext",
+// "name_2.ext", ...
+func (r *transferRun) claimPath(dir, name string, same func(fs.FileInfo) bool) (string, bool, error) {
 	ext := filepath.Ext(name)
 	stem := strings.TrimSuffix(name, ext)
 
@@ -445,7 +568,7 @@ func (r *transferRun) claimPath(name string, same func(fs.FileInfo) bool) (strin
 		if n > 0 {
 			candidate = fmt.Sprintf("%s_%d%s", stem, n, ext)
 		}
-		path := filepath.Join(r.opts.DestPath, candidate)
+		path := filepath.Join(dir, candidate)
 		key := strings.ToLower(path) // Windows file names are case-insensitive
 		if _, taken := r.reserved[key]; taken {
 			continue

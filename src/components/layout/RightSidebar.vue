@@ -6,6 +6,7 @@ import { useDeviceStore } from '../../stores/deviceStore'
 import { usePhotoStore } from '../../stores/photoStore'
 import { useTransferStore } from '../../stores/transferStore'
 import type { CompareProgress } from '../../types/compare'
+import type { FolderStructure } from '../../types/transfer'
 
 type TransferFormat = 'original' | 'jpg' | 'both'
 
@@ -26,6 +27,12 @@ const formatOptions: readonly { value: TransferFormat; label: string }[] = [
   { value: 'original', label: 'Original only' },
   { value: 'jpg', label: 'JPG only' },
   { value: 'both', label: 'Original + JPG' },
+]
+
+const folderOptions: readonly { value: FolderStructure; label: string }[] = [
+  { value: 'flat', label: 'Flat (all in one folder)' },
+  { value: 'year_month', label: 'Year / Month (e.g., 2021/04)' },
+  { value: 'year_month_day', label: 'Year / Month / Day (e.g., 2021/04/15)' },
 ]
 
 // The three radio buttons map onto the two booleans of the transfer options.
@@ -207,6 +214,29 @@ async function onTransfer(): Promise<void> {
               v-model="format"
               type="radio"
               name="format"
+              :value="option.value"
+              class="h-4 w-4 accent-blue-500"
+            />
+            {{ option.label }}
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset :disabled="isRunning">
+        <legend class="mb-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">
+          Folder structure
+        </legend>
+        <div class="space-y-1">
+          <label
+            v-for="option in folderOptions"
+            :key="option.value"
+            class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-zinc-800 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            :class="isRunning ? 'cursor-not-allowed opacity-60' : ''"
+          >
+            <input
+              v-model="options.folderStructure"
+              type="radio"
+              name="folder-structure"
               :value="option.value"
               class="h-4 w-4 accent-blue-500"
             />
