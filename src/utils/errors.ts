@@ -35,6 +35,9 @@ const EXACT: Record<string, string> = {
   'file is not a HEIC or JPEG image': 'errors.notImage',
   'convert DNG to JPG: ffmpeg wrote no JPEG': 'errors.ffmpegNoJpeg',
   'context is required': 'errors.contextRequired',
+  'choose a cache folder': 'errors.chooseCacheFolder',
+  'the application window is not ready yet': 'errors.windowNotReady',
+  'choose a folder that is not the application settings folder': 'errors.settingsFolder',
 }
 
 /** Longer prefixes first so a specific wrapper wins over a shorter one. */
@@ -61,6 +64,16 @@ const PREFIXES: readonly { prefix: string; key: string }[] = [
   { prefix: 'convert to JPG: ', key: 'errors.convertJpg' },
   { prefix: 'save JPG: ', key: 'errors.saveJpg' },
   { prefix: 'Unknown device: ', key: 'errors.unknownDevice' },
+  { prefix: 'cache folder is not a directory: ', key: 'errors.cacheNotDirectory' },
+  { prefix: 'remove previous cache folder: ', key: 'errors.removePreviousCache' },
+  { prefix: 'cannot access cache folder: ', key: 'errors.cacheFolderAccess' },
+  { prefix: 'select cache folder: ', key: 'errors.selectCacheFolder' },
+  { prefix: 'invalid cache folder: ', key: 'errors.invalidCacheFolder' },
+  { prefix: 'create cache folder: ', key: 'errors.createCacheFolder' },
+  { prefix: 'clear cache: ', key: 'errors.clearCache' },
+  { prefix: 'cache stats: ', key: 'errors.cacheStats' },
+  { prefix: 'read config: ', key: 'errors.readConfig' },
+  { prefix: 'save config: ', key: 'errors.saveConfig' },
 ]
 
 const FILE_UNAVAILABLE_SUFFIX = ' is not available on the device'

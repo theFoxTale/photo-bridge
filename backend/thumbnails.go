@@ -34,18 +34,10 @@ var ffmpegMissingLogged atomic.Bool
 // download. The frontend asks for every visible tile at once.
 var thumbnailFlights singleflight.Group
 
-// thumbnailCacheDir is %APPDATA%/PhotoBridge/thumbnails, or the user cache
-// directory when APPDATA is unset.
+// thumbnailCacheDir is the configured cache folder, or
+// %APPDATA%/PhotoBridge/thumbnails when the config does not set one.
 func thumbnailCacheDir() (string, error) {
-	root := strings.TrimSpace(os.Getenv("APPDATA"))
-	if root == "" {
-		var err error
-		root, err = os.UserCacheDir()
-		if err != nil {
-			return "", fmt.Errorf("thumbnail cache directory: %w", err)
-		}
-	}
-	return filepath.Join(root, "PhotoBridge", "thumbnails"), nil
+	return ResolveCacheDir()
 }
 
 // sanitizeCacheSegment makes id safe as one path segment. Photo IDs are

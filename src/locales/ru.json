@@ -29,7 +29,27 @@
     "light": "Светлая",
     "dark": "Тёмная",
     "english": "English",
-    "russian": "Русский"
+    "russian": "Русский",
+    "cache": {
+      "title": "Кэш",
+      "path": "Папка кэша",
+      "size": "Общий размер",
+      "change": "Изменить...",
+      "changing": "Изменение...",
+      "clear": "Очистить кэш",
+      "clearing": "Очистка...",
+      "cleared": "Кэш очищен",
+      "changed": "Папка кэша изменена",
+      "confirm": "Вы уверены?",
+      "yes": "Да",
+      "no": "Нет",
+      "loading": "Загрузка сведений о кэше…",
+      "loadFailed": "Не удалось прочитать кэш",
+      "changeFailed": "Не удалось изменить папку кэша",
+      "clearFailed": "Не удалось очистить кэш",
+      "retry": "Повторить",
+      "empty": "Папка кэша не задана"
+    }
   },
   "albums": {
     "cameraRoll": "Недавние",
@@ -206,6 +226,19 @@
     "ffmpegMissing": "ffmpeg недоступен: {detail}",
     "convertDng": "Не удалось конвертировать DNG в JPG: {detail}",
     "previewUnavailable": "Превью недоступно для {detail}",
-    "fileUnavailable": "{detail} недоступен на устройстве."
+    "fileUnavailable": "{detail} недоступен на устройстве.",
+    "chooseCacheFolder": "Выберите папку кэша.",
+    "windowNotReady": "Окно приложения ещё не готово.",
+    "settingsFolder": "Выберите папку, которая не является папкой настроек приложения.",
+    "cacheNotDirectory": "Папка кэша — не каталог: {detail}",
+    "removePreviousCache": "Не удалось удалить предыдущую папку кэша: {detail}",
+    "selectCacheFolder": "Не удалось выбрать папку кэша: {detail}",
+    "invalidCacheFolder": "Недопустимая папка кэша: {detail}",
+    "cacheFolderAccess": "Нет доступа к папке кэша: {detail}",
+    "createCacheFolder": "Не удалось создать папку кэша: {detail}",
+    "clearCache": "Не удалось очистить кэш: {detail}",
+    "cacheStats": "Не удалось прочитать кэш: {detail}",
+    "readConfig": "Не удалось прочитать настройки: {detail}",
+    "saveConfig": "Не удалось сохранить настройки: {detail}"
   }
 }

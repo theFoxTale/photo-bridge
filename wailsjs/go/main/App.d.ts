@@ -8,6 +8,8 @@ export function CancelTransfer():Promise<void>;
 
 export function CheckMdnsDiagnostics():Promise<boolean>;
 
+export function ClearCache():Promise<void>;
+
 export function CompareFolder(arg1:string,arg2:string):Promise<backend.CompareResult>;
 
 export function DiscoverDevices():Promise<backend.DiscoveryResult>;
@@ -18,9 +20,15 @@ export function FetchPhotos(arg1:string,arg2:string):Promise<Array<backend.Photo
 
 export function FetchThumbnail(arg1:string,arg2:string):Promise<string>;
 
+export function GetCacheStats():Promise<Record<string, any>>;
+
 export function LibraryMode():Promise<string>;
 
+export function SelectCacheFolder():Promise<string>;
+
 export function SelectFolder():Promise<string>;
+
+export function SetCacheFolder(arg1:string):Promise<void>;
 
 export function StopDiscovery():Promise<void>;
 

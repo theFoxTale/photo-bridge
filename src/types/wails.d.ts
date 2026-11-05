@@ -6,9 +6,10 @@ import type { TransferOptions, TransferResult } from './transfer'
 
 /**
  * Methods the Go `App` struct exposes to the frontend. Only methods that
- * actually exist in app_discovery.go, app_photos.go, app_transfer.go and
- * app_compare.go are declared here. `go` is optional because it is undefined when the page runs
- * outside the Wails shell (for example plain `vite` in a browser).
+ * actually exist in app_discovery.go, app_photos.go, app_transfer.go,
+ * app_compare.go and app_settings.go are declared here. `go` is optional
+ * because it is undefined when the page runs outside the Wails shell (for
+ * example plain `vite` in a browser).
  *
  * `runtime` is the Wails runtime, of which only event subscription is used.
  */
@@ -35,6 +36,11 @@ declare global {
           /** Rejects with "comparison cancelled" when stopped with CancelCompare. */
           CompareFolder(deviceId: string, localPath: string): Promise<CompareResult>
           CancelCompare(): Promise<void>
+          GetCacheStats(): Promise<{ path: string; sizeBytes: number }>
+          ClearCache(): Promise<void>
+          /** Resolves to an empty string when the user cancels the dialog. */
+          SelectCacheFolder(): Promise<string>
+          SetCacheFolder(path: string): Promise<void>
         }
       }
     }

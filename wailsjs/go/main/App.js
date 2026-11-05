@@ -14,6 +14,10 @@ export function CheckMdnsDiagnostics() {
   return window['go']['main']['App']['CheckMdnsDiagnostics']();
 }
 
+export function ClearCache() {
+  return window['go']['main']['App']['ClearCache']();
+}
+
 export function CompareFolder(arg1, arg2) {
   return window['go']['main']['App']['CompareFolder'](arg1, arg2);
 }
@@ -34,12 +38,24 @@ export function FetchThumbnail(arg1, arg2) {
   return window['go']['main']['App']['FetchThumbnail'](arg1, arg2);
 }
 
+export function GetCacheStats() {
+  return window['go']['main']['App']['GetCacheStats']();
+}
+
 export function LibraryMode() {
   return window['go']['main']['App']['LibraryMode']();
 }
 
+export function SelectCacheFolder() {
+  return window['go']['main']['App']['SelectCacheFolder']();
+}
+
 export function SelectFolder() {
   return window['go']['main']['App']['SelectFolder']();
+}
+
+export function SetCacheFolder(arg1) {
+  return window['go']['main']['App']['SetCacheFolder'](arg1);
 }
 
 export function StopDiscovery() {

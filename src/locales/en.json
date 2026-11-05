@@ -29,7 +29,27 @@
     "light": "Light",
     "dark": "Dark",
     "english": "English",
-    "russian": "Русский"
+    "russian": "Русский",
+    "cache": {
+      "title": "Cache",
+      "path": "Cache folder",
+      "size": "Total size",
+      "change": "Change...",
+      "changing": "Changing...",
+      "clear": "Clear Cache",
+      "clearing": "Clearing...",
+      "cleared": "Cache cleared",
+      "changed": "Cache folder updated",
+      "confirm": "Are you sure?",
+      "yes": "Yes",
+      "no": "No",
+      "loading": "Loading cache details…",
+      "loadFailed": "Could not read the cache",
+      "changeFailed": "Could not change the cache folder",
+      "clearFailed": "Could not clear the cache",
+      "retry": "Retry",
+      "empty": "No cache folder"
+    }
   },
   "albums": {
     "cameraRoll": "Camera Roll",
@@ -206,6 +226,19 @@
     "ffmpegMissing": "ffmpeg is not available: {detail}",
     "convertDng": "Could not convert DNG to JPG: {detail}",
     "previewUnavailable": "Preview is not available for {detail}",
-    "fileUnavailable": "{detail} is not available on the device."
+    "fileUnavailable": "{detail} is not available on the device.",
+    "chooseCacheFolder": "Choose a cache folder.",
+    "windowNotReady": "The application window is not ready yet.",
+    "settingsFolder": "Choose a folder that is not the application settings folder.",
+    "cacheNotDirectory": "Cache folder is not a directory: {detail}",
+    "removePreviousCache": "Could not remove the previous cache folder: {detail}",
+    "selectCacheFolder": "Could not select a cache folder: {detail}",
+    "invalidCacheFolder": "Invalid cache folder: {detail}",
+    "cacheFolderAccess": "Cannot access the cache folder: {detail}",
+    "createCacheFolder": "Could not create the cache folder: {detail}",
+    "clearCache": "Could not clear the cache: {detail}",
+    "cacheStats": "Could not read the cache: {detail}",
+    "readConfig": "Could not read settings: {detail}",
+    "saveConfig": "Could not save settings: {detail}"
   }
 }
