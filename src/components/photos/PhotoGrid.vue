@@ -3,6 +3,7 @@ import { storeToRefs } from 'pinia'
 import { computed } from 'vue'
 import { useDeviceDiscovery } from '../../composables/useDeviceDiscovery'
 import { usePhotoLibrary } from '../../composables/usePhotoLibrary'
+import type { MediaFilter } from '../../stores/photoStore'
 import type { Photo } from '../../types/photo'
 import PhotoTile from './PhotoTile.vue'
 
@@ -27,7 +28,20 @@ const {
   loadThumbnail,
 } = usePhotoLibrary()
 
-const { groupedPhotos } = storeToRefs(store)
+const { groupedPhotos, filteredPhotos, activeFilter, filterCounts, visibleSelectedCount } =
+  storeToRefs(store)
+
+const mediaFilters: readonly { id: MediaFilter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'photo', label: 'Photos' },
+  { id: 'video', label: 'Videos' },
+  { id: 'raw', label: 'RAW' },
+  { id: 'live', label: 'Live' },
+]
+
+function filterLabel(filter: { id: MediaFilter; label: string }): string {
+  return `${filter.label} (${filterCounts.value[filter.id].toLocaleString()})`
+}
 
 const albumName = computed(
   () => albums.value.find((album) => album.id === activeAlbumId.value)?.name ?? 'Photos',
@@ -35,6 +49,14 @@ const albumName = computed(
 
 const isSearchingDevice = computed(
   () => activeDeviceId.value === null && status.value === 'searching',
+)
+
+const showFilters = computed(
+  () =>
+    activeDeviceId.value !== null &&
+    !isLoading.value &&
+    error.value === null &&
+    photos.value.length > 0,
 )
 
 // Retries loading the current album's photos; falls back to a full reload when
@@ -70,12 +92,12 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
       </h2>
       <div v-if="photos.length > 0" class="flex shrink-0 items-center gap-3">
         <span class="text-xs text-zinc-500 dark:text-zinc-400" aria-live="polite">
-          {{ selectedCount }} of {{ photos.length }} selected
+          {{ visibleSelectedCount }} of {{ filteredPhotos.length }} selected
         </span>
         <button
           type="button"
           class="rounded px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-40 dark:text-blue-400"
-          :disabled="selectedCount === photos.length"
+          :disabled="filteredPhotos.length === 0 || visibleSelectedCount === filteredPhotos.length"
           @click="selectAll"
         >
           Select all
@@ -97,6 +119,29 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
       role="status"
     >
       Demo mode — showing sample photos
+    </div>
+
+    <div
+      v-if="showFilters"
+      class="flex shrink-0 gap-2 overflow-x-auto border-b border-zinc-200 px-4 py-2 dark:border-zinc-800"
+      role="toolbar"
+      aria-label="Filter photos"
+    >
+      <button
+        v-for="filter in mediaFilters"
+        :key="filter.id"
+        type="button"
+        class="shrink-0 rounded-full px-4 py-1.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+        :class="
+          activeFilter === filter.id
+            ? 'bg-blue-600 text-white'
+            : 'bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+        "
+        :aria-pressed="activeFilter === filter.id"
+        @click="activeFilter = filter.id"
+      >
+        {{ filterLabel(filter) }}
+      </button>
     </div>
 
     <div class="min-h-0 flex-1 overflow-y-auto">
@@ -205,6 +250,38 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
         <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
           Pick another album from the sidebar.
         </p>
+      </div>
+
+      <!-- Search or filter matched nothing -->
+      <div
+        v-else-if="filteredPhotos.length === 0"
+        class="flex flex-1 flex-col items-center justify-center text-center"
+        role="status"
+      >
+        <svg
+          class="mb-3 h-12 w-12 text-zinc-400 dark:text-zinc-600"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-3.5-3.5" />
+        </svg>
+        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">No photos found</p>
+        <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+          Try adjusting your search or filters
+        </p>
+        <button
+          type="button"
+          class="mt-3 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+          @click="store.clearFilters()"
+        >
+          Clear all filters
+        </button>
       </div>
 
       <!-- Timeline -->

@@ -1,5 +1,6 @@
+import { useDebounceFn } from '@vueuse/shared'
 import { defineStore } from 'pinia'
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import type { Album } from '../types/album'
 import type { SyncStatus } from '../types/compare'
 import type { Photo } from '../types/photo'
@@ -24,6 +25,32 @@ function toMessage(err: unknown): string {
 export interface PhotoGroup {
   dateLabel: string
   photos: Photo[]
+}
+
+/** Which media the grid is showing. `all` leaves the type alone. */
+export type MediaFilter = 'all' | 'photo' | 'video' | 'raw' | 'live'
+
+const searchDebounceMs = 200
+
+function matchesSearch(photo: Photo, query: string): boolean {
+  const needle = query.trim().toLowerCase()
+  if (needle === '') return true
+  return photo.filename.toLowerCase().includes(needle)
+}
+
+function matchesMediaFilter(photo: Photo, filter: MediaFilter): boolean {
+  switch (filter) {
+    case 'photo':
+      return !photo.isVideo && photo.format !== 'dng' && !photo.isLivePhoto
+    case 'video':
+      return photo.isVideo
+    case 'raw':
+      return photo.format === 'dng'
+    case 'live':
+      return photo.isLivePhoto
+    default:
+      return true
+  }
 }
 
 const dayLabel = new Intl.DateTimeFormat(undefined, {
@@ -59,6 +86,23 @@ export const usePhotoStore = defineStore('photo', () => {
   const selectedIds = ref<Set<string>>(new Set())
   const activeAlbumId = ref<string | null>(null)
   const error = ref<string | null>(null)
+  const searchQuery = ref('')
+  const activeFilter = ref<MediaFilter>('all')
+  // The query the grid actually uses. Typing updates it after a short pause;
+  // clearing it applies on the same tick so the X button does not lag.
+  const appliedSearchQuery = ref('')
+  const applySearch = useDebounceFn((value: string) => {
+    appliedSearchQuery.value = value
+  }, searchDebounceMs)
+
+  watch(searchQuery, (value) => {
+    if (value.trim() === '') {
+      applySearch.cancel()
+      appliedSearchQuery.value = ''
+      return
+    }
+    void applySearch(value)
+  })
 
   // Reported by the Go backend (build tag). `mock` means sample data.
   const libraryMode = ref<'device' | 'mock' | null>(null)
@@ -75,13 +119,45 @@ export const usePhotoStore = defineStore('photo', () => {
 
   const selectedCount = computed(() => selectedIds.value.size)
 
+  /** Album photos whose file name matches the applied search. */
+  const searchMatches = computed(() =>
+    photos.value.filter((photo) => matchesSearch(photo, appliedSearchQuery.value)),
+  )
+
+  /** Search matches limited to the active media chip. */
+  const filteredPhotos = computed(() =>
+    searchMatches.value.filter((photo) => matchesMediaFilter(photo, activeFilter.value)),
+  )
+
+  /** How many search matches each chip would show. Independent of the active chip. */
+  const filterCounts = computed(() => {
+    const counts: Record<MediaFilter, number> = { all: 0, photo: 0, video: 0, raw: 0, live: 0 }
+    for (const photo of searchMatches.value) {
+      counts.all++
+      if (matchesMediaFilter(photo, 'photo')) counts.photo++
+      if (matchesMediaFilter(photo, 'video')) counts.video++
+      if (matchesMediaFilter(photo, 'raw')) counts.raw++
+      if (matchesMediaFilter(photo, 'live')) counts.live++
+    }
+    return counts
+  })
+
+  /** Selected photos that are still on screen. Hidden selections are not counted. */
+  const visibleSelectedCount = computed(() => {
+    let count = 0
+    for (const photo of filteredPhotos.value) {
+      if (selectedIds.value.has(photo.id)) count++
+    }
+    return count
+  })
+
   /** Photos grouped by local calendar day, newest day first. Undated photos are last. */
   const groupedPhotos = computed((): PhotoGroup[] => {
     const todayStart = startOfLocalDay(new Date())
     const buckets = new Map<number, Photo[]>()
     const unknown: Photo[] = []
 
-    for (const photo of photos.value) {
+    for (const photo of filteredPhotos.value) {
       const parsed = parsePhotoDate(photo.date)
       if (parsed === null) {
         unknown.push(photo)
@@ -139,6 +215,12 @@ export const usePhotoStore = defineStore('photo', () => {
     }
   }
 
+  /** Drops the filename query and the media chip. */
+  function clearFilters(): void {
+    searchQuery.value = ''
+    activeFilter.value = 'all'
+  }
+
   function resetForDevice(deviceId: string | null): void {
     currentDeviceId = deviceId
     albumsRun++
@@ -147,6 +229,7 @@ export const usePhotoStore = defineStore('photo', () => {
     photos.value = []
     activeAlbumId.value = null
     error.value = null
+    clearFilters()
     selectedIds.value = new Set()
     thumbnailCache.clear()
     failedThumbnails.clear()
@@ -204,6 +287,8 @@ export const usePhotoStore = defineStore('photo', () => {
     }
     if (deviceId !== currentDeviceId) {
       resetForDevice(deviceId)
+    } else if (activeAlbumId.value !== albumId) {
+      clearFilters()
     }
 
     const run = ++photosRun
@@ -275,7 +360,11 @@ export const usePhotoStore = defineStore('photo', () => {
   }
 
   function selectAll(): void {
-    selectedIds.value = new Set(photos.value.map((photo) => photo.id))
+    const next = new Set(selectedIds.value)
+    for (const photo of filteredPhotos.value) {
+      next.add(photo.id)
+    }
+    selectedIds.value = next
   }
 
   /**
@@ -291,6 +380,8 @@ export const usePhotoStore = defineStore('photo', () => {
     photos,
     selectedIds,
     activeAlbumId,
+    searchQuery,
+    activeFilter,
     isLoading,
     error,
     libraryMode,
@@ -299,6 +390,9 @@ export const usePhotoStore = defineStore('photo', () => {
     thumbnailCache,
     failedThumbnails,
     selectedCount,
+    visibleSelectedCount,
+    filteredPhotos,
+    filterCounts,
     groupedPhotos,
     syncStatusFor,
     loadAlbums,
@@ -309,6 +403,7 @@ export const usePhotoStore = defineStore('photo', () => {
     selectAll,
     selectIds,
     clearSelection,
+    clearFilters,
     reset,
   }
 })

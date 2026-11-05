@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { storeToRefs } from 'pinia'
 import { computed } from 'vue'
 import { useDeviceDiscovery } from '../../composables/useDeviceDiscovery'
+import { usePhotoStore } from '../../stores/photoStore'
 
 defineProps<{
   isDark: boolean
@@ -11,6 +13,7 @@ const emit = defineEmits<{
 }>()
 
 const { status, activeDevice, error, refresh, stopDiscovery } = useDeviceDiscovery()
+const { searchQuery } = storeToRefs(usePhotoStore())
 
 const pill = computed(() => {
   switch (status.value) {
@@ -65,9 +68,9 @@ async function onPillClick(): Promise<void> {
 
 <template>
   <header
-    class="flex h-12 shrink-0 items-center justify-between border-b border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900"
+    class="grid h-12 shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,28rem)_minmax(0,1fr)] items-center gap-3 border-b border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900"
   >
-    <div class="flex items-center gap-2">
+    <div class="flex min-w-0 items-center gap-2">
       <svg
         class="h-5 w-5 text-blue-500"
         viewBox="0 0 24 24"
@@ -82,12 +85,56 @@ async function onPillClick(): Promise<void> {
         <circle cx="9" cy="10" r="1.5" />
         <path d="m21 16-5-5-9 8" />
       </svg>
-      <h1 class="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+      <h1 class="truncate text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
         Photo Bridge
       </h1>
     </div>
 
-    <div class="flex items-center gap-3">
+    <div class="relative min-w-0">
+      <svg
+        class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <circle cx="11" cy="11" r="7" />
+        <path d="m20 20-3.5-3.5" />
+      </svg>
+      <input
+        v-model="searchQuery"
+        type="search"
+        placeholder="Search photos"
+        autocomplete="off"
+        aria-label="Search photos by file name"
+        class="h-8 w-full rounded-full border border-zinc-300 bg-zinc-50 pl-9 pr-8 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:placeholder:text-zinc-500 [&::-webkit-search-cancel-button]:hidden"
+      />
+      <button
+        v-if="searchQuery !== ''"
+        type="button"
+        class="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-100"
+        aria-label="Clear search"
+        @click="searchQuery = ''"
+      >
+        <svg
+          class="h-3.5 w-3.5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+
+    <div class="flex items-center justify-end gap-3">
       <button
         type="button"
         class="flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
