@@ -112,4 +112,8 @@ func TestBuildPhotoMarksVideo(t *testing.T) {
 	if jpg.IsVideo || jpg.Format != "jpeg" {
 		t.Fatalf("jpg = %+v", jpg)
 	}
+	dng := buildPhoto(cameraRollID, "/DCIM/100APPLE/IMG_0001.DNG", fileStat{size: 12, mtime: taken})
+	if dng.IsVideo || dng.Format != "dng" || dng.Filename != "IMG_0001.DNG" {
+		t.Fatalf("dng = %+v", dng)
+	}
 }

@@ -29,9 +29,9 @@ import (
 //     roll folder are listed. Favorites, Screenshots and user albums live in
 //     PhotoData/Photos.sqlite, which is not parsed yet.
 //   - Live Photos appear as two separate files (image + MOV).
-//   - Previews are resized JPEGs in the local thumbnail cache. Video previews
-//     are one frame extracted with ffmpeg. DNG has no preview. FetchThumbnail
-//     still returns only a short file prefix and is not used for previews.
+//   - Previews are resized JPEGs in the local thumbnail cache. Video and DNG
+//     previews are one frame extracted with ffmpeg. FetchThumbnail still
+//     returns only a short file prefix and is not used for previews.
 
 const (
 	afcService = "com.apple.afc"

@@ -20,6 +20,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/image/tiff"
 )
 
 func TestCachedThumbnailPNGRoundTrip(t *testing.T) {
@@ -182,9 +184,9 @@ func TestCachedThumbnailRejectsUnsupported(t *testing.T) {
 		return nil
 	}
 
-	_, err := cachedThumbnail(context.Background(), "device-1", "100APPLE/IMG_0001.DNG", download)
+	_, err := cachedThumbnail(context.Background(), "device-1", "100APPLE/IMG_0001.AAE", download)
 	if err == nil {
-		t.Fatal("cachedThumbnail(DNG) succeeded")
+		t.Fatal("cachedThumbnail(AAE) succeeded")
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("download calls = %d, want 0", calls.Load())
@@ -374,6 +376,76 @@ func TestExtractVideoFrameExitErrorIsNotMissing(t *testing.T) {
 	}
 }
 
+func TestCachedThumbnailDNG(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	root := t.TempDir()
+	t.Setenv("APPDATA", root)
+	payload := testDNGBytes(t, 800, 400)
+
+	var srcPath string
+	download := func(_ context.Context, dest string) error {
+		srcPath = dest
+		return os.WriteFile(dest, payload, 0o644)
+	}
+	url, err := cachedThumbnail(context.Background(), "device-1", "100APPLE/IMG_0001.DNG", download)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := decodeJPEGDataURL(t, url)
+	if got := img.Bounds().Size(); got.X != 400 || got.Y != 200 {
+		t.Fatalf("size = %v, want 400x200", got)
+	}
+	if _, err := os.Stat(srcPath); !os.IsNotExist(err) {
+		t.Fatalf("temp original %q still present: %v", srcPath, err)
+	}
+	cacheFile := filepath.Join(root, "PhotoBridge", "thumbnails", "device-1", "100APPLE_IMG_0001.DNG.jpg")
+	if _, err := os.Stat(cacheFile); err != nil {
+		t.Fatalf("cache file: %v", err)
+	}
+}
+
+func TestCachedThumbnailCorruptDNG(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("APPDATA", root)
+
+	var srcPath string
+	download := func(_ context.Context, dest string) error {
+		srcPath = dest
+		return os.WriteFile(dest, []byte("not a dng"), 0o644)
+	}
+	_, err := cachedThumbnail(context.Background(), "device-1", "100APPLE/BAD.DNG", download)
+	if err == nil {
+		t.Fatal("expected a corrupt DNG to fail")
+	}
+	if _, statErr := os.Stat(srcPath); !os.IsNotExist(statErr) {
+		t.Fatalf("temp original %q still present: %v", srcPath, statErr)
+	}
+	cacheDir := filepath.Join(root, "PhotoBridge", "thumbnails")
+	entries, readErr := os.ReadDir(cacheDir)
+	if readErr == nil && len(entries) != 0 {
+		t.Fatalf("cache dir has entries after a failed DNG preview: %d", len(entries))
+	}
+}
+
+func TestFFmpegJPEGQuality(t *testing.T) {
+	best, err := ffmpegJPEGQuality(100)
+	if err != nil || best != 2 {
+		t.Fatalf("quality 100 = %d, %v, want 2", best, err)
+	}
+	worst, err := ffmpegJPEGQuality(1)
+	if err != nil || worst != 31 {
+		t.Fatalf("quality 1 = %d, %v, want 31", worst, err)
+	}
+	if _, err := ffmpegJPEGQuality(0); err == nil {
+		t.Fatal("quality 0 was accepted")
+	}
+	if _, err := ffmpegJPEGQuality(101); err == nil {
+		t.Fatal("quality 101 was accepted")
+	}
+}
+
 func writeTestVideo(t *testing.T, path, color string, w, h int, seconds float64) {
 	t.Helper()
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
@@ -388,6 +460,21 @@ func writeTestVideo(t *testing.T, path, color string, w, h int, seconds float64)
 	if err != nil {
 		t.Fatalf("ffmpeg fixture: %v\n%s", err, out)
 	}
+}
+
+func testDNGBytes(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetRGBA(x, y, color.RGBA{R: 180, G: uint8(x), B: uint8(y), A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := tiff.Encode(&buf, img, &tiff.Options{Compression: tiff.Uncompressed}); err != nil {
+		t.Fatalf("encode tiff: %v", err)
+	}
+	return buf.Bytes()
 }
 
 func pngBytes(t *testing.T, w, h int) []byte {

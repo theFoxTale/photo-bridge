@@ -139,7 +139,7 @@ func cachedThumbnail(ctx context.Context, deviceID, photoID string, download fun
 	if !ok {
 		return "", fmt.Errorf("unsupported file type for %q", photoID)
 	}
-	if format != "jpeg" && format != "png" && format != "heic" && !isVideoFormat(format) {
+	if format != "jpeg" && format != "png" && format != "heic" && format != "dng" && !isVideoFormat(format) {
 		return "", fmt.Errorf("preview not available for %s files", format)
 	}
 	if download == nil {
@@ -209,9 +209,12 @@ func generateThumbnail(ctx context.Context, cachePath, format string, download f
 	}
 
 	var img image.Image
-	if isVideoFormat(format) {
+	switch {
+	case isVideoFormat(format):
 		img, err = decodeVideoPoster(ctx, srcPath)
-	} else {
+	case format == "dng":
+		img, err = decodeDNGPreview(ctx, srcPath)
+	default:
 		img, err = decodeThumbnailSource(srcPath, format)
 	}
 	if err != nil {
@@ -282,19 +285,74 @@ func decodeVideoPoster(ctx context.Context, srcPath string) (image.Image, error)
 //	ffmpeg -y -nostdin -i <src> -ss <timestamp> -vframes 1 -f image2 <dst>
 //
 // A missing binary is exec.ErrNotFound (the process never starts). A non-zero
-// exit after ffmpeg has started is exec.ExitError and is returned as-is.
+// exit after ffmpeg has started is exec.ExitError, wrapped with ffmpeg's message.
 func extractVideoFrame(ctx context.Context, ffmpegPath, srcPath, dstPath, timestamp string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, ffmpegPath,
+	if err := runFFmpeg(ctx, ffmpegPath,
 		"-y", "-nostdin",
 		"-i", srcPath,
 		"-ss", timestamp,
 		"-vframes", "1",
 		"-f", "image2",
 		dstPath,
-	)
+	); err != nil {
+		return fmt.Errorf("extract video frame at %s: %w", timestamp, err)
+	}
+	if !jpegFileReady(dstPath) {
+		return fmt.Errorf("extract video frame at %s: ffmpeg wrote no JPEG", timestamp)
+	}
+	return nil
+}
+
+// decodeDNGPreview extracts one JPEG from a DNG with ffmpeg and decodes that
+// JPEG. The DNG itself is never passed to an image decoder.
+func decodeDNGPreview(ctx context.Context, srcPath string) (image.Image, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			logFFmpegMissing()
+		}
+		return nil, fmt.Errorf("ffmpeg not available: %w", err)
+	}
+
+	poster, err := os.CreateTemp("", "photobridge-dng-*.jpg")
+	if err != nil {
+		return nil, fmt.Errorf("create temporary frame: %w", err)
+	}
+	posterPath := poster.Name()
+	if err := poster.Close(); err != nil {
+		_ = os.Remove(posterPath)
+		return nil, fmt.Errorf("create temporary frame: %w", err)
+	}
+	defer func() { _ = os.Remove(posterPath) }()
+
+	if err := runFFmpeg(ctx, ffmpeg,
+		"-y", "-nostdin",
+		"-i", srcPath,
+		"-vframes", "1",
+		"-f", "image2",
+		posterPath,
+	); err != nil {
+		return nil, fmt.Errorf("extract DNG preview: %w", err)
+	}
+	if !jpegFileReady(posterPath) {
+		return nil, errors.New("extract DNG preview: ffmpeg wrote no JPEG")
+	}
+	return decodeJPEGFile(posterPath)
+}
+
+// runFFmpeg runs ffmpeg with args. A missing binary is exec.ErrNotFound and
+// is logged once. A non-zero exit after ffmpeg has started is exec.ExitError.
+func runFFmpeg(ctx context.Context, ffmpegPath string, args ...string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	hideFFmpegWindow(cmd)
@@ -307,12 +365,9 @@ func extractVideoFrame(ctx context.Context, ffmpegPath, srcPath, dstPath, timest
 			detail = detail[:512]
 		}
 		if detail != "" {
-			return fmt.Errorf("extract video frame at %s: %w (%s)", timestamp, err, detail)
+			return fmt.Errorf("%w (%s)", err, detail)
 		}
-		return fmt.Errorf("extract video frame at %s: %w", timestamp, err)
-	}
-	if !jpegFileReady(dstPath) {
-		return fmt.Errorf("extract video frame at %s: ffmpeg wrote no JPEG", timestamp)
+		return err
 	}
 	return nil
 }

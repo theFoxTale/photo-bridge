@@ -413,8 +413,14 @@ func (r *transferRun) process(ctx context.Context, slot int, id string) error {
 	if plan.saveJPG {
 		tmpJPG := filepath.Join(r.tmpDir, fmt.Sprintf("worker%d.jpg", slot))
 		defer os.Remove(tmpJPG)
-		if err := convertToJPEG(source, tmpJPG, r.opts.JPGQuality); err != nil {
-			return fmt.Errorf("convert to JPG: %w", err)
+		var convErr error
+		if info.Format == "dng" {
+			convErr = convertDNGToJPEG(ctx, source, tmpJPG, r.opts.JPGQuality)
+		} else {
+			convErr = convertToJPEG(source, tmpJPG, r.opts.JPGQuality)
+		}
+		if convErr != nil {
+			return fmt.Errorf("convert to JPG: %w", convErr)
 		}
 		if err := os.Rename(tmpJPG, plan.jpgPath); err != nil {
 			return fmt.Errorf("save JPG: %w", err)
@@ -429,7 +435,7 @@ func (r *transferRun) process(ctx context.Context, slot int, id string) error {
 func (r *transferRun) plan(info Photo, name string, when time.Time, known bool) (photoPlan, error) {
 	var p photoPlan
 
-	jpgCapable := info.Format == "heic" || info.Format == "jpeg"
+	jpgCapable := info.Format == "heic" || info.Format == "jpeg" || info.Format == "dng"
 	wantOriginal := r.opts.SaveOriginal
 	wantJPG := r.opts.SaveJPG && jpgCapable
 	switch {

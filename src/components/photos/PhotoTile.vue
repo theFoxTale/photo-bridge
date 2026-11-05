@@ -68,7 +68,7 @@ const statusNote = computed(() => {
 
 const ariaLabel = computed(() => {
   const action = props.selected ? 'Selected' : 'Select'
-  const kind = props.photo.isVideo ? 'video ' : ''
+  const kind = props.photo.isVideo ? 'video ' : props.photo.format === 'dng' ? 'RAW ' : ''
   return `${action} ${kind}${props.photo.filename}${statusNote.value}`
 })
 
@@ -179,6 +179,14 @@ const showVideoChrome = computed(() => props.photo.isVideo && (props.thumbUrl !=
           <path d="M10.3 4.3 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0z" />
         </svg>
         <span class="sr-only">Conflicts with a file on this PC</span>
+      </span>
+
+      <span
+        v-if="photo.format === 'dng'"
+        class="pointer-events-none absolute top-2 rounded bg-black/55 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white"
+        :class="syncStatus === 'synced' || syncStatus === 'conflict' ? 'left-8' : 'left-2'"
+      >
+        RAW
       </span>
 
       <!-- Hover overlay -->

@@ -2,12 +2,15 @@ package backend
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
 	"io"
 	"os"
+	"os/exec"
+	"strconv"
 )
 
 // heicImage is a decoded HEIC photo.
@@ -38,6 +41,54 @@ func sniffKind(head []byte) imageKind {
 	default:
 		return kindUnknown
 	}
+}
+
+// ffmpegJPEGQuality maps the app's 1-100 slider onto ffmpeg's -q:v scale.
+// 100 becomes 2 (excellent) and 1 becomes 31 (smallest).
+func ffmpegJPEGQuality(quality int) (int, error) {
+	if quality < 1 || quality > 100 {
+		return 0, fmt.Errorf("JPG quality must be between 1 and 100, got %d", quality)
+	}
+	return 2 + (100-quality)*29/99, nil
+}
+
+// convertDNGToJPEG writes srcPath, a DNG, to dstPath as a JPEG.
+// -map_metadata 0 keeps the source metadata. The DNG is not decoded in Go.
+func convertDNGToJPEG(ctx context.Context, srcPath, dstPath string, quality int) error {
+	if ctx == nil {
+		return errors.New("context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	qv, err := ffmpegJPEGQuality(quality)
+	if err != nil {
+		return err
+	}
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			logFFmpegMissing()
+		}
+		return fmt.Errorf("ffmpeg not available: %w", err)
+	}
+
+	err = runFFmpeg(ctx, ffmpeg,
+		"-y", "-nostdin",
+		"-i", srcPath,
+		"-map_metadata", "0",
+		"-q:v", strconv.Itoa(qv),
+		dstPath,
+	)
+	if err != nil {
+		_ = os.Remove(dstPath)
+		return fmt.Errorf("convert DNG to JPG: %w", err)
+	}
+	if !jpegFileReady(dstPath) {
+		_ = os.Remove(dstPath)
+		return errors.New("convert DNG to JPG: ffmpeg wrote no JPEG")
+	}
+	return nil
 }
 
 // convertToJPEG writes srcPath (a HEIC or JPEG file) to dstPath as a JPEG,

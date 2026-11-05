@@ -12,6 +12,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -524,11 +525,11 @@ func TestRunTransferJPEGOriginalIsNotDuplicated(t *testing.T) {
 func TestRunTransferReportsUnsupportedAndMissing(t *testing.T) {
 	dir := t.TempDir()
 	lib := newFakeLibrary()
-	lib.add("a/IMG_1.DNG", "IMG_1.DNG", "dng", []byte("raw data"))
+	lib.add("a/IMG_1.PNG", "IMG_1.PNG", "png", []byte("raw data"))
 	lib.add("a/IMG_2.HEIC", "IMG_2.HEIC", "heic", testJPEG(t, false))
 	opts := TransferOptions{SaveJPG: true, JPGQuality: 90, DestPath: dir}
 
-	res, err := RunTransfer(context.Background(), lib, "dev", []string{"a/IMG_1.DNG", "a/IMG_2.HEIC", "a/missing.HEIC"}, opts, nil)
+	res, err := RunTransfer(context.Background(), lib, "dev", []string{"a/IMG_1.PNG", "a/IMG_2.HEIC", "a/missing.HEIC"}, opts, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,11 +543,111 @@ func TestRunTransferReportsUnsupportedAndMissing(t *testing.T) {
 	for _, f := range res.Failed {
 		reasons[f.PhotoID] = f.Reason
 	}
-	if !strings.Contains(reasons["a/IMG_1.DNG"], "not supported for DNG") {
-		t.Errorf("DNG reason = %q", reasons["a/IMG_1.DNG"])
+	if !strings.Contains(reasons["a/IMG_1.PNG"], "not supported for PNG") {
+		t.Errorf("PNG reason = %q", reasons["a/IMG_1.PNG"])
 	}
 	if !strings.Contains(reasons["a/missing.HEIC"], "not found") {
 		t.Errorf("missing photo reason = %q", reasons["a/missing.HEIC"])
+	}
+	if names := listDir(t, dir); len(names) != 1 || !hasName(names, "IMG_2.jpg") {
+		t.Errorf("destination holds %v, want only IMG_2.jpg", names)
+	}
+}
+
+func TestRunTransferDNGOriginalAndJPG(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	dir := t.TempDir()
+	lib := newFakeLibrary()
+	payload := testDNGBytes(t, 64, 32)
+	lib.add("a/IMG_1.DNG", "IMG_1.DNG", "dng", payload)
+
+	res, err := RunTransfer(context.Background(), lib, "dev", []string{"a/IMG_1.DNG"}, baseOptions(dir), nil)
+	if err != nil || len(res.Succeeded) != 1 || len(res.Failed) != 0 {
+		t.Fatalf("%+v, %v", res, err)
+	}
+	names := listDir(t, dir)
+	if len(names) != 2 || !hasName(names, "IMG_1.DNG") || !hasName(names, "IMG_1.jpg") {
+		t.Fatalf("destination holds %v, want IMG_1.DNG and IMG_1.jpg", names)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "IMG_1.DNG"))
+	if err != nil || string(got) != string(payload) {
+		t.Fatalf("original DNG was not saved unchanged: %v", err)
+	}
+	jpg, err := os.Open(filepath.Join(dir, "IMG_1.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer jpg.Close()
+	img, err := jpeg.Decode(jpg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := img.Bounds().Size(); got.X != 64 || got.Y != 32 {
+		t.Fatalf("jpg size = %v, want 64x32", got)
+	}
+}
+
+func TestRunTransferDNGJPGOnly(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	dir := t.TempDir()
+	lib := newFakeLibrary()
+	lib.add("a/IMG_1.DNG", "IMG_1.DNG", "dng", testDNGBytes(t, 40, 20))
+	opts := TransferOptions{SaveJPG: true, JPGQuality: 100, DestPath: dir}
+
+	res, err := RunTransfer(context.Background(), lib, "dev", []string{"a/IMG_1.DNG"}, opts, nil)
+	if err != nil || len(res.Succeeded) != 1 || len(res.Failed) != 0 {
+		t.Fatalf("%+v, %v", res, err)
+	}
+	names := listDir(t, dir)
+	if len(names) != 1 || !hasName(names, "IMG_1.jpg") {
+		t.Fatalf("destination holds %v, want only IMG_1.jpg", names)
+	}
+}
+
+func TestRunTransferDNGOriginalOnly(t *testing.T) {
+	dir := t.TempDir()
+	lib := newFakeLibrary()
+	payload := []byte("raw data")
+	lib.add("a/IMG_1.DNG", "IMG_1.DNG", "dng", payload)
+	opts := TransferOptions{SaveOriginal: true, JPGQuality: 90, DestPath: dir}
+
+	res, err := RunTransfer(context.Background(), lib, "dev", []string{"a/IMG_1.DNG"}, opts, nil)
+	if err != nil || len(res.Succeeded) != 1 || len(res.Failed) != 0 {
+		t.Fatalf("%+v, %v", res, err)
+	}
+	names := listDir(t, dir)
+	if len(names) != 1 || !hasName(names, "IMG_1.DNG") {
+		t.Fatalf("destination holds %v, want only IMG_1.DNG", names)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "IMG_1.DNG"))
+	if err != nil || string(got) != string(payload) {
+		t.Fatalf("original = %q, %v", got, err)
+	}
+}
+
+func TestRunTransferCorruptDNGDoesNotStopTheBatch(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	dir := t.TempDir()
+	lib := newFakeLibrary()
+	lib.add("a/BAD.DNG", "BAD.DNG", "dng", []byte("not a dng"))
+	lib.add("a/IMG_2.HEIC", "IMG_2.HEIC", "heic", testJPEG(t, false))
+	opts := TransferOptions{SaveJPG: true, JPGQuality: 90, DestPath: dir}
+
+	res, err := RunTransfer(context.Background(), lib, "dev", []string{"a/BAD.DNG", "a/IMG_2.HEIC"}, opts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Succeeded) != 1 || res.Succeeded[0] != "a/IMG_2.HEIC" {
+		t.Errorf("Succeeded = %v", res.Succeeded)
+	}
+	if len(res.Failed) != 1 || res.Failed[0].PhotoID != "a/BAD.DNG" || !strings.Contains(res.Failed[0].Reason, "convert") {
+		t.Errorf("Failed = %+v", res.Failed)
 	}
 	if names := listDir(t, dir); len(names) != 1 || !hasName(names, "IMG_2.jpg") {
 		t.Errorf("destination holds %v, want only IMG_2.jpg", names)
