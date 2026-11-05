@@ -92,6 +92,30 @@ func (l *fakeLibrary) add(id, filename, format string, data []byte) {
 	l.data[id] = data
 }
 
+// markLive marks a still as a Live Photo whose video is videoID.
+func (l *fakeLibrary) markLive(id, videoID string) {
+	p, ok := l.photos[id]
+	if ok {
+		p.IsLivePhoto = true
+		p.LivePhotoVideoID = videoID
+		l.photos[id] = p
+	}
+	for i := range l.listing {
+		if l.listing[i].ID == id {
+			l.listing[i].IsLivePhoto = true
+			l.listing[i].LivePhotoVideoID = videoID
+		}
+	}
+}
+
+// addLive registers a still and its .mov. The video's own file name may differ;
+// transfer saves it under the still's base name.
+func (l *fakeLibrary) addLive(stillID, stillName, format string, still []byte, videoID, videoName string, video []byte) {
+	l.add(stillID, stillName, format, still)
+	l.add(videoID, videoName, "mov", video)
+	l.markLive(stillID, videoID)
+}
+
 func (l *fakeLibrary) Albums(context.Context, string) ([]Album, error) {
 	return nil, errors.New("unused")
 }
@@ -697,6 +721,123 @@ func TestRunTransferVideoJPGOnlyFails(t *testing.T) {
 	if names := listDir(t, dir); len(names) != 0 {
 		t.Errorf("destination holds %v, want nothing", names)
 	}
+}
+
+func TestRunTransferLivePhoto(t *testing.T) {
+	stillID := "100APPLE/IMG_1234.HEIC"
+	videoID := "100APPLE/IMG_1234.MOV"
+	mov := []byte("mov-bytes-for-live-photo")
+
+	t.Run("original", func(t *testing.T) {
+		dir := t.TempDir()
+		lib := newFakeLibrary()
+		still := []byte("heic-bytes")
+		lib.addLive(stillID, "IMG_1234.HEIC", "heic", still, videoID, "CLIP.MOV", mov)
+		opts := TransferOptions{SaveOriginal: true, JPGQuality: 90, DestPath: dir}
+
+		res, err := RunTransfer(context.Background(), lib, "dev", []string{stillID}, opts, nil)
+		if err != nil || len(res.Succeeded) != 1 || len(res.Failed) != 0 {
+			t.Fatalf("%+v, %v", res, err)
+		}
+		names := listDir(t, dir)
+		if len(names) != 2 || !hasName(names, "IMG_1234.HEIC") || !hasName(names, "IMG_1234.MOV") {
+			t.Fatalf("destination holds %v, want IMG_1234.HEIC and IMG_1234.MOV", names)
+		}
+		if got := readFile(t, filepath.Join(dir, "IMG_1234.HEIC")); string(got) != string(still) {
+			t.Fatalf("still = %q", got)
+		}
+		if got := readFile(t, filepath.Join(dir, "IMG_1234.MOV")); string(got) != string(mov) {
+			t.Fatalf("mov = %q", got)
+		}
+		if res.BytesCopied != int64(len(still)+len(mov)) {
+			t.Errorf("BytesCopied = %d, want %d", res.BytesCopied, len(still)+len(mov))
+		}
+	})
+
+	t.Run("original and jpg", func(t *testing.T) {
+		dir := t.TempDir()
+		lib := newFakeLibrary()
+		still := testJPEG(t, false)
+		lib.addLive(stillID, "IMG_1234.HEIC", "heic", still, videoID, "IMG_1234.MOV", mov)
+
+		res, err := RunTransfer(context.Background(), lib, "dev", []string{stillID}, baseOptions(dir), nil)
+		if err != nil || len(res.Succeeded) != 1 || len(res.Failed) != 0 {
+			t.Fatalf("%+v, %v", res, err)
+		}
+		names := listDir(t, dir)
+		if len(names) != 3 || !hasName(names, "IMG_1234.HEIC") || !hasName(names, "IMG_1234.jpg") || !hasName(names, "IMG_1234.MOV") {
+			t.Fatalf("destination holds %v", names)
+		}
+		if got := readFile(t, filepath.Join(dir, "IMG_1234.MOV")); string(got) != string(mov) {
+			t.Fatalf("mov = %q", got)
+		}
+		if _, err := jpeg.Decode(bytes.NewReader(readFile(t, filepath.Join(dir, "IMG_1234.jpg")))); err != nil {
+			t.Fatalf("jpg: %v", err)
+		}
+	})
+
+	t.Run("jpg only keeps the mov", func(t *testing.T) {
+		dir := t.TempDir()
+		lib := newFakeLibrary()
+		lib.addLive(stillID, "IMG_1234.HEIC", "heic", testJPEG(t, false), videoID, "IMG_1234.mov", mov)
+		opts := TransferOptions{SaveJPG: true, JPGQuality: 90, DestPath: dir}
+
+		res, err := RunTransfer(context.Background(), lib, "dev", []string{stillID}, opts, nil)
+		if err != nil || len(res.Succeeded) != 1 || len(res.Failed) != 0 {
+			t.Fatalf("%+v, %v", res, err)
+		}
+		names := listDir(t, dir)
+		if len(names) != 2 || !hasName(names, "IMG_1234.jpg") || !hasName(names, "IMG_1234.mov") || hasName(names, "IMG_1234.HEIC") {
+			t.Fatalf("destination holds %v, want the JPG and the original MOV", names)
+		}
+		if got := readFile(t, filepath.Join(dir, "IMG_1234.mov")); string(got) != string(mov) {
+			t.Fatalf("mov = %q", got)
+		}
+	})
+
+	t.Run("same size mov is skipped", func(t *testing.T) {
+		dir := t.TempDir()
+		lib := newFakeLibrary()
+		still := []byte("heic-bytes")
+		lib.addLive(stillID, "IMG_1234.HEIC", "heic", still, videoID, "IMG_1234.MOV", mov)
+		if err := os.WriteFile(filepath.Join(dir, "IMG_1234.MOV"), mov, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		opts := TransferOptions{SaveOriginal: true, JPGQuality: 90, DestPath: dir}
+
+		res, err := RunTransfer(context.Background(), lib, "dev", []string{stillID}, opts, nil)
+		if err != nil || len(res.Succeeded) != 1 || len(res.Failed) != 0 {
+			t.Fatalf("%+v, %v", res, err)
+		}
+		if lib.downloadCalls != 1 {
+			t.Errorf("downloads = %d, want 1 (the still only)", lib.downloadCalls)
+		}
+		if got := readFile(t, filepath.Join(dir, "IMG_1234.MOV")); string(got) != string(mov) {
+			t.Fatalf("existing mov changed to %q", got)
+		}
+	})
+
+	t.Run("invalid video id fails the photo", func(t *testing.T) {
+		dir := t.TempDir()
+		lib := newFakeLibrary()
+		lib.add(stillID, "IMG_1234.HEIC", "heic", []byte("heic-bytes"))
+		lib.markLive(stillID, "../IMG_1234.MOV")
+		opts := TransferOptions{SaveOriginal: true, JPGQuality: 90, DestPath: dir}
+
+		res, err := RunTransfer(context.Background(), lib, "dev", []string{stillID}, opts, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Failed) != 1 || res.Failed[0].PhotoID != stillID || !strings.Contains(res.Failed[0].Reason, "invalid Live Photo video id") {
+			t.Fatalf("%+v", res)
+		}
+		if lib.downloadCalls != 0 {
+			t.Errorf("downloads = %d, want 0", lib.downloadCalls)
+		}
+		if names := listDir(t, dir); len(names) != 0 {
+			t.Errorf("destination holds %v", names)
+		}
+	})
 }
 
 func TestRunTransferCancel(t *testing.T) {

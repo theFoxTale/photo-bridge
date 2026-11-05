@@ -291,6 +291,27 @@ func TestRunCompareMatchesVideosBySizeAndDate(t *testing.T) {
 	}
 }
 
+func TestRunCompareSkipsLivePhotoVideo(t *testing.T) {
+	dir := t.TempDir()
+	lib := newFakeLibrary()
+	lib.addListed("100APPLE/IMG_1234.JPG", "IMG_1234.JPG", "jpeg", compareDate(1).Format(time.RFC3339), distinctJPEG(t, 1))
+	lib.markLive("100APPLE/IMG_1234.JPG", "100APPLE/IMG_1234.MOV")
+
+	writeLocal(t, filepath.Join(dir, "IMG_1234.MOV"), []byte("live-video"), compareDate(1))
+	writeLocal(t, filepath.Join(dir, "OTHER.MOV"), []byte("other-video"), compareDate(2))
+
+	res, err := RunCompare(context.Background(), lib, nil, "dev", dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsID(res.NewOnDevice, "100APPLE/IMG_1234.JPG") || len(res.NewOnDevice) != 1 {
+		t.Errorf("NewOnDevice = %v", photoIDs(res.NewOnDevice))
+	}
+	if len(res.MissingOnPC) != 1 || res.MissingOnPC[0].Filename != "OTHER.MOV" {
+		t.Errorf("MissingOnPC = %+v, want only OTHER.MOV", res.MissingOnPC)
+	}
+}
+
 func TestHashCache(t *testing.T) {
 	cache, err := OpenHashCache(filepath.Join(t.TempDir(), "sub", "cache.db"))
 	if err != nil {

@@ -79,6 +79,8 @@ export namespace backend {
 	    height: number;
 	    albumId: string;
 	    thumbUrl: string;
+	    isLivePhoto: boolean;
+	    livePhotoVideoId: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Photo(source);
@@ -96,6 +98,8 @@ export namespace backend {
 	        this.height = source["height"];
 	        this.albumId = source["albumId"];
 	        this.thumbUrl = source["thumbUrl"];
+	        this.isLivePhoto = source["isLivePhoto"];
+	        this.livePhotoVideoId = source["livePhotoVideoId"];
 	    }
 	}
 	export class CompareResult {

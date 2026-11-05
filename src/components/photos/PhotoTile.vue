@@ -68,7 +68,13 @@ const statusNote = computed(() => {
 
 const ariaLabel = computed(() => {
   const action = props.selected ? 'Selected' : 'Select'
-  const kind = props.photo.isVideo ? 'video ' : props.photo.format === 'dng' ? 'RAW ' : ''
+  const kind = props.photo.isLivePhoto
+    ? 'Live Photo '
+    : props.photo.isVideo
+      ? 'video '
+      : props.photo.format === 'dng'
+        ? 'RAW '
+        : ''
   return `${action} ${kind}${props.photo.filename}${statusNote.value}`
 })
 
@@ -179,6 +185,19 @@ const showVideoChrome = computed(() => props.photo.isVideo && (props.thumbUrl !=
           <path d="M10.3 4.3 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0z" />
         </svg>
         <span class="sr-only">Conflicts with a file on this PC</span>
+      </span>
+
+      <span
+        v-if="photo.isLivePhoto"
+        class="pointer-events-none absolute top-2 flex items-center gap-1 rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white"
+        :class="syncStatus === 'synced' || syncStatus === 'conflict' ? 'left-8' : 'left-2'"
+        title="Live Photo"
+      >
+        <svg class="h-3 w-3" viewBox="0 0 16 16" aria-hidden="true">
+          <circle cx="8" cy="8" r="2.1" fill="currentColor" />
+          <circle cx="8" cy="8" r="5.25" fill="none" stroke="currentColor" stroke-width="1.2" />
+        </svg>
+        LIVE
       </span>
 
       <span

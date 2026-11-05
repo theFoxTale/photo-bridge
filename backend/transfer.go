@@ -348,6 +348,9 @@ type photoPlan struct {
 	saveOriginal bool
 	jpgPath      string
 	saveJPG      bool
+	videoID      string
+	videoPath    string
+	saveVideo    bool
 }
 
 func (r *transferRun) process(ctx context.Context, slot int, id string) error {
@@ -362,6 +365,11 @@ func (r *transferRun) process(ctx context.Context, slot int, id string) error {
 	r.mu.Lock()
 	r.current = name
 	r.mu.Unlock()
+
+	video, hasVideo, err := r.liveVideo(ctx, info)
+	if err != nil {
+		return err
+	}
 
 	when, known := takenTime(info, name)
 	part := filepath.Join(r.tmpDir, fmt.Sprintf("worker%d.part", slot))
@@ -381,22 +389,23 @@ func (r *transferRun) process(ctx context.Context, slot int, id string) error {
 		}
 	}
 
-	plan, err := r.plan(info, name, when, known)
+	plan, err := r.plan(info, name, when, known, video, hasVideo)
 	if err != nil {
 		return err
 	}
-	if !plan.saveOriginal && !plan.saveJPG {
+	if !plan.saveOriginal && !plan.saveJPG && !plan.saveVideo {
 		return nil // everything is already in the destination
 	}
 
-	if !downloaded {
+	if (plan.saveOriginal || plan.saveJPG) && !downloaded {
 		if err := r.lib.Download(ctx, r.deviceID, id, part, func(n int64) { r.bytes.Add(n) }); err != nil {
 			return err
 		}
 	}
 
 	// The original goes first: if the conversion fails, the original is
-	// still saved, and a re-run skips it and retries only the JPG.
+	// still saved, and a re-run skips it and retries only the JPG. The Live
+	// Photo video is saved before conversion for the same reason.
 	stamp := info.Date
 	if known {
 		stamp = when.UTC().Format(time.RFC3339)
@@ -408,6 +417,12 @@ func (r *transferRun) process(ctx context.Context, slot int, id string) error {
 		}
 		source = plan.originalPath
 		touch(plan.originalPath, stamp)
+	}
+
+	if plan.saveVideo {
+		if err := r.saveLiveVideo(ctx, slot, plan, stamp); err != nil {
+			return err
+		}
 	}
 
 	if plan.saveJPG {
@@ -430,9 +445,55 @@ func (r *transferRun) process(ctx context.Context, slot int, id string) error {
 	return nil
 }
 
+// liveVideo loads the .mov that belongs to a Live Photo. A still with the flag
+// unset, or with no video id, is not a Live Photo. The video id has to be a
+// normal device path; transfer will not follow anything else.
+func (r *transferRun) liveVideo(ctx context.Context, info Photo) (Photo, bool, error) {
+	if !info.IsLivePhoto || info.LivePhotoVideoID == "" || info.LivePhotoVideoID == info.ID {
+		return Photo{}, false, nil
+	}
+	if !validPhotoID(info.LivePhotoVideoID) {
+		return Photo{}, false, fmt.Errorf("invalid Live Photo video id %q", info.LivePhotoVideoID)
+	}
+	video, err := r.lib.Describe(ctx, r.deviceID, info.LivePhotoVideoID)
+	if err != nil {
+		return Photo{}, false, fmt.Errorf("read Live Photo video: %w", err)
+	}
+	if video.Format != "mov" {
+		return Photo{}, false, fmt.Errorf("Live Photo video %q is not a MOV file", info.LivePhotoVideoID)
+	}
+	return video, true, nil
+}
+
+// liveVideoFileName is the still's base name plus the video's extension, so
+// the two files keep the Live Photo pairing in the destination folder.
+func liveVideoFileName(stillName, videoName string) string {
+	stem := strings.TrimSuffix(stillName, filepath.Ext(stillName))
+	ext := filepath.Ext(videoName)
+	if !strings.EqualFold(ext, ".mov") {
+		ext = ".MOV"
+	}
+	return stem + ext
+}
+
+// saveLiveVideo downloads the .mov next to the still. It is never converted.
+func (r *transferRun) saveLiveVideo(ctx context.Context, slot int, plan photoPlan, stamp string) error {
+	part := filepath.Join(r.tmpDir, fmt.Sprintf("worker%d.mov", slot))
+	defer os.Remove(part)
+	if err := r.lib.Download(ctx, r.deviceID, plan.videoID, part, func(n int64) { r.bytes.Add(n) }); err != nil {
+		return fmt.Errorf("save Live Photo video: %w", err)
+	}
+	if err := os.Rename(part, plan.videoPath); err != nil {
+		return fmt.Errorf("save Live Photo video: %w", err)
+	}
+	touch(plan.videoPath, stamp)
+	return nil
+}
+
 // plan decides which outputs a photo needs and where they go, skipping files
-// that are already present.
-func (r *transferRun) plan(info Photo, name string, when time.Time, known bool) (photoPlan, error) {
+// that are already present. A Live Photo's .mov is saved in every mode,
+// including JPG only, and an existing copy of the same size is left alone.
+func (r *transferRun) plan(info Photo, name string, when time.Time, known bool, video Photo, hasVideo bool) (photoPlan, error) {
 	var p photoPlan
 
 	jpgCapable := info.Format == "heic" || info.Format == "jpeg" || info.Format == "dng"
@@ -478,6 +539,21 @@ func (r *transferRun) plan(info Photo, name string, when time.Time, known bool) 
 			return p, err
 		}
 		p.jpgPath, p.saveJPG = path, !skip
+	}
+	if hasVideo {
+		videoName := sanitizeFilename(video.Filename)
+		if videoName == "" {
+			videoName = strings.TrimSuffix(name, filepath.Ext(name)) + ".MOV"
+		} else {
+			videoName = liveVideoFileName(name, videoName)
+		}
+		videoPath, skip, err := r.claimPath(dir, videoName, func(fi fs.FileInfo) bool { return fi.Size() == video.Size })
+		if err != nil {
+			return p, err
+		}
+		p.videoID = info.LivePhotoVideoID
+		p.videoPath = videoPath
+		p.saveVideo = !skip
 	}
 	return p, nil
 }

@@ -117,3 +117,104 @@ func TestBuildPhotoMarksVideo(t *testing.T) {
 		t.Fatalf("dng = %+v", dng)
 	}
 }
+
+func TestMergeLivePhotos(t *testing.T) {
+	heic := Photo{ID: "100APPLE/IMG_1234.HEIC", Filename: "IMG_1234.HEIC", Format: "heic", Size: 10, Date: "2026-05-01T10:00:00Z"}
+	mov := Photo{ID: "100APPLE/IMG_1234.MOV", Filename: "IMG_1234.MOV", Format: "mov", Size: 20, IsVideo: true}
+	jpg := Photo{ID: "100APPLE/IMG_1234.JPG", Filename: "IMG_1234.JPG", Format: "jpeg", Size: 30}
+	otherMov := Photo{ID: "100APPLE/CLIP.MOV", Filename: "CLIP.MOV", Format: "mov", Size: 4, IsVideo: true}
+	mp4 := Photo{ID: "100APPLE/IMG_1234.MP4", Filename: "IMG_1234.MP4", Format: "mp4", Size: 5, IsVideo: true}
+	dng := Photo{ID: "100APPLE/IMG_9.DNG", Filename: "IMG_9.DNG", Format: "dng", Size: 6}
+	dngMov := Photo{ID: "100APPLE/IMG_9.MOV", Filename: "IMG_9.MOV", Format: "mov", Size: 7, IsVideo: true}
+
+	t.Run("heic and mov become one", func(t *testing.T) {
+		got := mergeLivePhotos([]Photo{mov, heic})
+		if len(got) != 1 {
+			t.Fatalf("got %d photos, want 1: %+v", len(got), got)
+		}
+		if got[0].ID != heic.ID || got[0].Size != heic.Size || got[0].Date != heic.Date || got[0].Format != "heic" {
+			t.Fatalf("still = %+v, want the HEIC unchanged", got[0])
+		}
+		if !got[0].IsLivePhoto || got[0].LivePhotoVideoID != mov.ID {
+			t.Fatalf("live fields = %+v", got[0])
+		}
+	})
+
+	t.Run("jpg and mov become one", func(t *testing.T) {
+		got := mergeLivePhotos([]Photo{jpg, mov})
+		if len(got) != 1 || !got[0].IsLivePhoto || got[0].Format != "jpeg" || got[0].LivePhotoVideoID != mov.ID {
+			t.Fatalf("got %+v", got)
+		}
+	})
+
+	t.Run("heic wins over jpg", func(t *testing.T) {
+		got := mergeLivePhotos([]Photo{jpg, mov, heic})
+		if len(got) != 2 {
+			t.Fatalf("got %d photos, want the HEIC and the JPG: %+v", len(got), got)
+		}
+		if got[0].ID != jpg.ID || got[0].IsLivePhoto || got[0].LivePhotoVideoID != "" {
+			t.Fatalf("jpg = %+v, want a normal still", got[0])
+		}
+		if got[1].ID != heic.ID || !got[1].IsLivePhoto || got[1].LivePhotoVideoID != mov.ID {
+			t.Fatalf("heic = %+v", got[1])
+		}
+	})
+
+	t.Run("case and folder", func(t *testing.T) {
+		lower := Photo{ID: "100APPLE/img_1234.heic", Filename: "img_1234.heic", Format: "heic", Size: 1}
+		upperMov := Photo{ID: "100APPLE/IMG_1234.MOV", Filename: "IMG_1234.MOV", Format: "mov", IsVideo: true}
+		otherDir := Photo{ID: "101APPLE/IMG_1234.MOV", Filename: "IMG_1234.MOV", Format: "mov", IsVideo: true}
+		got := mergeLivePhotos([]Photo{lower, upperMov, otherDir})
+		if len(got) != 2 {
+			t.Fatalf("got %+v, want the still and the other folder's mov", got)
+		}
+		if !got[0].IsLivePhoto || got[0].LivePhotoVideoID != upperMov.ID {
+			t.Fatalf("still = %+v", got[0])
+		}
+		if got[1].ID != otherDir.ID || got[1].IsLivePhoto {
+			t.Fatalf("other folder = %+v", got[1])
+		}
+	})
+
+	t.Run("unpaired videos stay", func(t *testing.T) {
+		got := mergeLivePhotos([]Photo{heic, mp4, otherMov, dng, dngMov})
+		if len(got) != 5 {
+			t.Fatalf("got %d, want all five (mp4 and dng mov are not live companions): %+v", len(got), got)
+		}
+		for _, p := range got {
+			if p.IsLivePhoto {
+				t.Fatalf("unexpected live photo %+v", p)
+			}
+		}
+	})
+
+	t.Run("every mov in the group is dropped", func(t *testing.T) {
+		second := Photo{ID: "100APPLE/IMG_1234.mov", Filename: "IMG_1234.mov", Format: "mov", IsVideo: true}
+		got := mergeLivePhotos([]Photo{mov, second, heic})
+		if len(got) != 1 || got[0].LivePhotoVideoID != mov.ID {
+			t.Fatalf("got %+v, want one still pointing at the first mov", got)
+		}
+	})
+}
+
+func TestAlbumsFromMediaPathsOmitsPairedLiveVideo(t *testing.T) {
+	albums := albumsFromMediaPaths([]string{
+		"/DCIM/100APPLE/IMG_1234.HEIC",
+		"/DCIM/100APPLE/IMG_1234.MOV",
+		"/DCIM/100APPLE/IMG_1235.JPG",
+		"/DCIM/100APPLE/CLIP.MP4",
+		"/DCIM/101APPLE/IMG_1234.MOV",
+	})
+	if len(albums) != 3 {
+		t.Fatalf("albums = %+v", albums)
+	}
+	if albums[0].ID != cameraRollID || albums[0].Count != 4 {
+		t.Errorf("camera roll = %+v, want count 4", albums[0])
+	}
+	if albums[1].ID != "roll-100APPLE" || albums[1].Name != "Folder 100" || albums[1].Count != 3 {
+		t.Errorf("folder 100 = %+v, want count 3", albums[1])
+	}
+	if albums[2].ID != "roll-101APPLE" || albums[2].Count != 1 {
+		t.Errorf("folder 101 = %+v, want the unpaired mov", albums[2])
+	}
+}

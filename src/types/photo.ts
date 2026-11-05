@@ -15,4 +15,8 @@ export interface Photo {
   albumId: string
   /** base64 data URL; empty until fetched with FetchThumbnail */
   thumbUrl: string
+  /** True when a .mov with the same base name belongs to this still. */
+  isLivePhoto: boolean
+  /** Device id of that .mov. Absent when this is not a Live Photo. */
+  livePhotoVideoId?: string
 }

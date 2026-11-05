@@ -28,7 +28,8 @@ import (
 //   - Only "Camera Roll" (everything under /DCIM) and one album per *APPLE
 //     roll folder are listed. Favorites, Screenshots and user albums live in
 //     PhotoData/Photos.sqlite, which is not parsed yet.
-//   - Live Photos appear as two separate files (image + MOV).
+//   - A Live Photo (a HEIC or JPEG plus a .mov with the same base name in the
+//     same folder) is one item. The .mov is not listed on its own.
 //   - Previews are resized JPEGs in the local thumbnail cache. Video and DNG
 //     previews are one frame extracted with ffmpeg. FetchThumbnail still
 //     returns only a short file prefix and is not used for previews.
@@ -495,27 +496,7 @@ func (l *AFCPhotoLibrary) FetchAlbums(deviceID string) ([]Album, error) {
 		if err != nil {
 			return err
 		}
-
-		counts := make(map[string]int)
-		for _, p := range paths {
-			rel := strings.TrimPrefix(p, dcimRoot+"/")
-			if roll, _, nested := strings.Cut(rel, "/"); nested {
-				counts[roll]++
-			}
-		}
-
-		rolls := make([]string, 0, len(counts))
-		for roll := range counts {
-			rolls = append(rolls, roll)
-		}
-		sort.Strings(rolls)
-
-		built := make([]Album, 0, len(rolls)+1)
-		built = append(built, Album{ID: cameraRollID, Name: "Camera Roll", Count: len(paths)})
-		for _, roll := range rolls {
-			built = append(built, Album{ID: rollIDPrefix + roll, Name: rollDisplayName(roll), Count: counts[roll]})
-		}
-		albums = built
+		albums = albumsFromMediaPaths(paths)
 		return nil
 	})
 	if err != nil {
@@ -583,6 +564,7 @@ func (l *AFCPhotoLibrary) FetchPhotos(deviceID, albumID string) ([]Photo, error)
 			}
 			built = append(built, buildPhoto(albumID, p, st))
 		}
+		built = mergeLivePhotos(built)
 
 		sort.SliceStable(built, func(i, j int) bool {
 			if built[i].Date != built[j].Date {
@@ -638,6 +620,166 @@ func dateFromFilename(name string) time.Time {
 		return time.Time{}
 	}
 	return t
+}
+
+// albumsFromMediaPaths builds the Camera Roll and per-folder albums. A .mov
+// that pairs with a HEIC or JPEG is not counted, so the sidebar matches the grid.
+func albumsFromMediaPaths(paths []string) []Album {
+	photos := make([]Photo, 0, len(paths))
+	for _, p := range paths {
+		photos = append(photos, buildPhoto(cameraRollID, p, fileStat{}))
+	}
+	photos = mergeLivePhotos(photos)
+
+	counts := make(map[string]int)
+	for _, p := range photos {
+		if roll, _, nested := strings.Cut(p.ID, "/"); nested {
+			counts[roll]++
+		}
+	}
+
+	rolls := make([]string, 0, len(counts))
+	for roll := range counts {
+		rolls = append(rolls, roll)
+	}
+	sort.Strings(rolls)
+
+	built := make([]Album, 0, len(rolls)+1)
+	built = append(built, Album{ID: cameraRollID, Name: "Camera Roll", Count: len(photos)})
+	for _, roll := range rolls {
+		built = append(built, Album{ID: rollIDPrefix + roll, Name: rollDisplayName(roll), Count: counts[roll]})
+	}
+	return built
+}
+
+// livePhotoGroupKey is the directory of id plus the case-folded base name.
+// Pairing never crosses folders.
+func livePhotoGroupKey(id string) string {
+	dir, base := path.Split(id)
+	stem := strings.TrimSuffix(base, path.Ext(base))
+	return dir + strings.ToLower(stem)
+}
+
+// mergeLivePhotos folds a .mov into a HEIC or JPEG that shares its base name
+// in the same folder. The still is kept (a HEIC wins over a JPEG). Every .mov
+// in that group is dropped. Anything else, including a .mov with no still and
+// every .mp4, is unchanged. Order of the surviving items is preserved.
+func mergeLivePhotos(photos []Photo) []Photo {
+	if len(photos) == 0 {
+		return photos
+	}
+
+	type group struct {
+		idx []int
+	}
+	groups := make(map[string]*group)
+	keys := make([]string, 0)
+	updated := make([]Photo, len(photos))
+	copy(updated, photos)
+
+	for i, p := range updated {
+		key := livePhotoGroupKey(p.ID)
+		g, ok := groups[key]
+		if !ok {
+			g = &group{}
+			groups[key] = g
+			keys = append(keys, key)
+		}
+		g.idx = append(g.idx, i)
+	}
+
+	drop := make([]bool, len(updated))
+	for _, key := range keys {
+		g := groups[key]
+		still := -1
+		mov := -1
+		for _, i := range g.idx {
+			switch updated[i].Format {
+			case "heic":
+				if still == -1 || updated[still].Format != "heic" {
+					still = i
+				}
+			case "jpeg":
+				if still == -1 {
+					still = i
+				}
+			case "mov":
+				if mov == -1 {
+					mov = i
+				}
+			}
+		}
+		if still == -1 || mov == -1 {
+			continue
+		}
+		updated[still].IsLivePhoto = true
+		updated[still].LivePhotoVideoID = updated[mov].ID
+		for _, i := range g.idx {
+			if updated[i].Format == "mov" {
+				drop[i] = true
+			}
+		}
+	}
+
+	out := make([]Photo, 0, len(updated))
+	for i, p := range updated {
+		if !drop[i] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// attachLiveVideo sets the Live Photo fields by listing the still's folder.
+// It does not use the grid cache: Describe is what transfer calls, and the
+// listing that filled the grid may be gone. A JPEG stays a normal photo when
+// a HEIC in the same folder already owns the .mov.
+// Callers must hold s.mu.
+func (s *afcSession) attachLiveVideo(photo Photo, absPath string) (Photo, error) {
+	if photo.Format != "heic" && photo.Format != "jpeg" {
+		return photo, nil
+	}
+
+	dir := path.Dir(absPath)
+	entries, err := s.client.List(dir)
+	if err != nil {
+		return Photo{}, err
+	}
+	sort.Strings(entries)
+
+	stem := strings.ToLower(strings.TrimSuffix(photo.Filename, path.Ext(photo.Filename)))
+	group := make([]Photo, 0, 4)
+	included := false
+	for _, name := range entries {
+		if name == "" || strings.HasPrefix(name, ".") {
+			continue
+		}
+		format, ok := formatOf(name)
+		if !ok || (format != "heic" && format != "jpeg" && format != "mov") {
+			continue
+		}
+		if strings.ToLower(strings.TrimSuffix(name, path.Ext(name))) != stem {
+			continue
+		}
+		full := dir + "/" + name
+		if full == absPath {
+			group = append(group, photo)
+			included = true
+			continue
+		}
+		group = append(group, buildPhoto(photo.AlbumID, full, fileStat{}))
+	}
+	if !included {
+		group = append(group, photo)
+	}
+
+	merged := mergeLivePhotos(group)
+	for _, p := range merged {
+		if p.ID == photo.ID {
+			return p, nil
+		}
+	}
+	return photo, nil
 }
 
 // validPhotoID accepts only clean relative paths below /DCIM, so an ID coming
@@ -727,7 +869,8 @@ func (l *AFCPhotoLibrary) DescribePhoto(deviceID, photoID string) (Photo, error)
 			return permanentf("%q is not a file", photoID)
 		}
 		photo = buildPhoto("", absPath, st)
-		return nil
+		photo, err = s.attachLiveVideo(photo, absPath)
+		return err
 	})
 	if err != nil {
 		if isAFCStatusError(err) {

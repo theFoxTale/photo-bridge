@@ -16,6 +16,12 @@ type Photo struct {
 	// ThumbURL is a base64 JPEG data URL of a preview. FetchPhotos leaves it
 	// empty on purpose; thumbnails are fetched lazily through FetchThumbnail.
 	ThumbURL string `json:"thumbUrl"`
+	// IsLivePhoto is true when a .mov file in the same folder shares this
+	// still's base name. The .mov is not listed on its own.
+	IsLivePhoto bool `json:"isLivePhoto"`
+	// LivePhotoVideoID is the device id of that .mov. Empty when IsLivePhoto
+	// is false.
+	LivePhotoVideoID string `json:"livePhotoVideoId"`
 }
 
 // isVideoFormat reports whether format is a video the app can list and copy.

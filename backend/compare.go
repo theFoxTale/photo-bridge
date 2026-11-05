@@ -267,9 +267,14 @@ func runCompare(ctx context.Context, lib Library, cache *HashCache, deviceID, ro
 	result := emptyCompareResult()
 	claimed := make(map[string]bool) // local paths that belong to a device photo
 	heicStems := make(map[string]bool)
+	liveStems := make(map[string]bool)
 	for _, p := range photos {
+		stem := strings.ToLower(strings.TrimSuffix(p.Filename, filepath.Ext(p.Filename)))
 		if p.Format == "heic" {
-			heicStems[strings.ToLower(strings.TrimSuffix(p.Filename, filepath.Ext(p.Filename)))] = true
+			heicStems[stem] = true
+		}
+		if p.IsLivePhoto {
+			liveStems[stem] = true
 		}
 	}
 
@@ -324,9 +329,14 @@ func runCompare(ctx context.Context, lib Library, cache *HashCache, deviceID, ro
 		}
 		// A JPG next to a HEIC of the same name is most likely the copy this
 		// app converted; it cannot match anything on the phone by design.
+		// A .mov next to a Live Photo is the video half of that same item,
+		// which is no longer listed on its own.
 		ext := strings.ToLower(filepath.Ext(l.Filename))
 		stem := strings.ToLower(strings.TrimSuffix(l.Filename, filepath.Ext(l.Filename)))
 		if (ext == ".jpg" || ext == ".jpeg") && heicStems[stem] {
+			continue
+		}
+		if ext == ".mov" && liveStems[stem] {
 			continue
 		}
 		result.MissingOnPC = append(result.MissingOnPC, l.LocalFile)
