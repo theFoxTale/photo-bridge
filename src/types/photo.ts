@@ -1,4 +1,4 @@
-export type PhotoFormat = 'heic' | 'jpeg' | 'dng' | 'png' | 'mov'
+export type PhotoFormat = 'heic' | 'jpeg' | 'dng' | 'png' | 'mov' | 'mp4'
 
 /** Mirrors the Go `backend.Photo` struct (see backend/photos.go). */
 export interface Photo {
@@ -9,6 +9,7 @@ export interface Photo {
   /** bytes */
   size: number
   format: PhotoFormat
+  isVideo: boolean
   width: number
   height: number
   albumId: string

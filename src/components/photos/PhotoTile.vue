@@ -65,6 +65,14 @@ const statusNote = computed(() => {
       return ''
   }
 })
+
+const ariaLabel = computed(() => {
+  const action = props.selected ? 'Selected' : 'Select'
+  const kind = props.photo.isVideo ? 'video ' : ''
+  return `${action} ${kind}${props.photo.filename}${statusNote.value}`
+})
+
+const showVideoChrome = computed(() => props.photo.isVideo && (props.thumbUrl !== null || props.thumbFailed))
 </script>
 
 <template>
@@ -77,7 +85,7 @@ const statusNote = computed(() => {
       type="button"
       class="absolute inset-0 block h-full w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400"
       :aria-pressed="selected"
-      :aria-label="`${selected ? 'Selected' : 'Select'} ${photo.filename}${statusNote}`"
+      :aria-label="ariaLabel"
       @click="onTileClick"
     >
       <img
@@ -86,6 +94,11 @@ const statusNote = computed(() => {
         :alt="photo.filename"
         draggable="false"
         class="h-full w-full select-none object-cover"
+        :class="syncStatus === 'synced' ? 'opacity-50' : ''"
+      />
+      <span
+        v-else-if="thumbFailed && photo.isVideo"
+        class="block h-full w-full bg-zinc-900"
         :class="syncStatus === 'synced' ? 'opacity-50' : ''"
       />
       <span
@@ -113,6 +126,20 @@ const statusNote = computed(() => {
         class="block h-full w-full animate-pulse bg-zinc-200 dark:bg-zinc-800"
         :class="syncStatus === 'synced' ? 'opacity-50' : ''"
       />
+
+      <span
+        v-if="showVideoChrome"
+        class="pointer-events-none absolute inset-0"
+        :class="syncStatus === 'synced' ? 'opacity-50' : ''"
+      >
+        <span class="absolute inset-x-0 bottom-0 h-16 bg-linear-to-t from-black/70 to-transparent" />
+        <span class="absolute inset-0 flex items-center justify-center">
+          <svg class="h-10 w-10 drop-shadow-md" viewBox="0 0 48 48" aria-hidden="true">
+            <circle cx="24" cy="24" r="22" fill="black" fill-opacity="0.45" />
+            <path fill="white" d="M20 16.5v15l13-7.5-13-7.5z" />
+          </svg>
+        </span>
+      </span>
 
       <span
         v-if="syncStatus === 'synced'"

@@ -86,7 +86,7 @@ func (l *fakeLibrary) addListed(id, filename, format, date string, data []byte) 
 func (l *fakeLibrary) add(id, filename, format string, data []byte) {
 	l.photos[id] = Photo{
 		ID: id, Filename: filename, Format: format, Size: int64(len(data)),
-		Date: "2026-03-04T05:06:07Z",
+		Date: "2026-03-04T05:06:07Z", IsVideo: isVideoFormat(format),
 	}
 	l.data[id] = data
 }
@@ -550,6 +550,51 @@ func TestRunTransferReportsUnsupportedAndMissing(t *testing.T) {
 	}
 	if names := listDir(t, dir); len(names) != 1 || !hasName(names, "IMG_2.jpg") {
 		t.Errorf("destination holds %v, want only IMG_2.jpg", names)
+	}
+}
+
+func TestRunTransferVideoSkipsJPG(t *testing.T) {
+	dir := t.TempDir()
+	lib := newFakeLibrary()
+	payload := []byte("mov-bytes")
+	lib.add("a/CLIP.MOV", "CLIP.MOV", "mov", payload)
+	lib.add("a/CLIP.MP4", "CLIP.MP4", "mp4", []byte("mp4-bytes"))
+
+	res, err := RunTransfer(context.Background(), lib, "dev", []string{"a/CLIP.MOV", "a/CLIP.MP4"}, baseOptions(dir), nil)
+	if err != nil || len(res.Succeeded) != 2 || len(res.Failed) != 0 {
+		t.Fatalf("%+v, %v", res, err)
+	}
+	names := listDir(t, dir)
+	if len(names) != 2 || !hasName(names, "CLIP.MOV") || !hasName(names, "CLIP.MP4") {
+		t.Errorf("destination holds %v, want the two videos and no JPG", names)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "CLIP.MOV"))
+	if err != nil || string(got) != string(payload) {
+		t.Fatalf("saved mov = %q, %v", got, err)
+	}
+}
+
+func TestRunTransferVideoJPGOnlyFails(t *testing.T) {
+	dir := t.TempDir()
+	lib := newFakeLibrary()
+	lib.add("a/CLIP.MOV", "CLIP.MOV", "mov", []byte("mov-bytes"))
+	lib.add("a/CLIP.MP4", "CLIP.MP4", "mp4", []byte("mp4-bytes"))
+	opts := TransferOptions{SaveJPG: true, JPGQuality: 90, DestPath: dir}
+
+	res, err := RunTransfer(context.Background(), lib, "dev", []string{"a/CLIP.MOV", "a/CLIP.MP4"}, opts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Succeeded) != 0 || len(res.Failed) != 2 {
+		t.Fatalf("%+v", res)
+	}
+	for _, f := range res.Failed {
+		if f.Reason != "Cannot convert video to JPG" {
+			t.Errorf("%s reason = %q", f.PhotoID, f.Reason)
+		}
+	}
+	if names := listDir(t, dir); len(names) != 0 {
+		t.Errorf("destination holds %v, want nothing", names)
 	}
 }
 

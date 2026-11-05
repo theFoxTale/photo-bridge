@@ -29,9 +29,9 @@ import (
 //     roll folder are listed. Favorites, Screenshots and user albums live in
 //     PhotoData/Photos.sqlite, which is not parsed yet.
 //   - Live Photos appear as two separate files (image + MOV).
-//   - Previews are resized JPEGs in the local thumbnail cache. DNG and MOV
-//     have no preview. FetchThumbnail still returns only a short file prefix
-//     and is not used for previews.
+//   - Previews are resized JPEGs in the local thumbnail cache. Video previews
+//     are one frame extracted with ffmpeg. DNG has no preview. FetchThumbnail
+//     still returns only a short file prefix and is not used for previews.
 
 const (
 	afcService = "com.apple.afc"
@@ -95,6 +95,7 @@ var mediaFormats = map[string]string{
 	"png":  "png",
 	"dng":  "dng",
 	"mov":  "mov",
+	"mp4":  "mp4",
 }
 
 var filenameDate = regexp.MustCompile(`(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})`)
@@ -617,6 +618,7 @@ func buildPhoto(albumID, absPath string, st fileStat) Photo {
 		Date:     date,
 		Size:     st.size,
 		Format:   format,
+		IsVideo:  isVideoFormat(format),
 		Width:    0,
 		Height:   0,
 		AlbumID:  albumID,
@@ -658,9 +660,10 @@ func validPhotoID(id string) bool {
 // FetchThumbnail returns the first thumbnailPrefixBytes bytes of a JPEG or PNG.
 //
 // Previews do not use this. deviceLibrary.Thumbnail downloads the full file
-// and stores a resized JPEG through cachedThumbnail. This prefix reader remains
-// for a short sample of a JPEG or PNG. HEIC, DNG and MOV are rejected here
-// because a file prefix is not a decodable image.
+// and stores a resized JPEG through cachedThumbnail. Video previews are one
+// ffmpeg frame of that download. This prefix reader remains for a short sample
+// of a JPEG or PNG. HEIC, DNG, MOV and MP4 are rejected here because a file
+// prefix is not a decodable image.
 func (l *AFCPhotoLibrary) FetchThumbnail(deviceID, photoID string) ([]byte, error) {
 	if err := validateDeviceID(deviceID); err != nil {
 		return nil, err

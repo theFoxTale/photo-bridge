@@ -35,11 +35,17 @@ const (
 var ErrCompareCancelled = errors.New("comparison cancelled")
 
 // localImageExts are the file types looked at in the local folder.
-var localImageExts = map[string]bool{".jpg": true, ".jpeg": true, ".heic": true, ".png": true, ".dng": true}
+var localImageExts = map[string]bool{
+	".jpg": true, ".jpeg": true, ".heic": true, ".png": true, ".dng": true,
+	".mov": true, ".mp4": true,
+}
 
 // deviceImageFormats are the Photo.Format values that are compared. Videos
-// are left out on both sides.
-var deviceImageFormats = map[string]bool{"heic": true, "jpeg": true, "png": true, "dng": true}
+// are matched by date and size the same way photos are.
+var deviceImageFormats = map[string]bool{
+	"heic": true, "jpeg": true, "png": true, "dng": true,
+	"mov": true, "mp4": true,
+}
 
 // LocalFile is an image file found in the local folder.
 type LocalFile struct {

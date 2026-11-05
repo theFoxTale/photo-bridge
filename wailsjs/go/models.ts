@@ -74,6 +74,7 @@ export namespace backend {
 	    date: string;
 	    size: number;
 	    format: string;
+	    isVideo: boolean;
 	    width: number;
 	    height: number;
 	    albumId: string;
@@ -90,6 +91,7 @@ export namespace backend {
 	        this.date = source["date"];
 	        this.size = source["size"];
 	        this.format = source["format"];
+	        this.isVideo = source["isVideo"];
 	        this.width = source["width"];
 	        this.height = source["height"];
 	        this.albumId = source["albumId"];
@@ -206,6 +208,7 @@ export namespace backend {
 	    saveJpg: boolean;
 	    jpgQuality: number;
 	    destPath: string;
+	    folderStructure: string;
 	    overwritePaths: Record<string, string>;
 	
 	    static createFrom(source: any = {}) {
@@ -218,6 +221,7 @@ export namespace backend {
 	        this.saveJpg = source["saveJpg"];
 	        this.jpgQuality = source["jpgQuality"];
 	        this.destPath = source["destPath"];
+	        this.folderStructure = source["folderStructure"];
 	        this.overwritePaths = source["overwritePaths"];
 	    }
 	}

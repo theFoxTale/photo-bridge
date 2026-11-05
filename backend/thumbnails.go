@@ -9,9 +9,12 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	xdraw "golang.org/x/image/draw"
 	"golang.org/x/sync/singleflight"
@@ -20,7 +23,12 @@ import (
 const (
 	thumbnailMaxEdge     = 400
 	thumbnailJPEGQuality = 85
+
+	ffmpegMissingWarning = "FFmpeg not found. Video thumbnails will be unavailable."
 )
+
+// ffmpegMissingLogged keeps the missing-ffmpeg warning to a single line.
+var ffmpegMissingLogged atomic.Bool
 
 // thumbnailFlights collapses concurrent previews of the same photo into one
 // download. The frontend asks for every visible tile at once.
@@ -131,7 +139,7 @@ func cachedThumbnail(ctx context.Context, deviceID, photoID string, download fun
 	if !ok {
 		return "", fmt.Errorf("unsupported file type for %q", photoID)
 	}
-	if format != "jpeg" && format != "png" && format != "heic" {
+	if format != "jpeg" && format != "png" && format != "heic" && !isVideoFormat(format) {
 		return "", fmt.Errorf("preview not available for %s files", format)
 	}
 	if download == nil {
@@ -200,7 +208,12 @@ func generateThumbnail(ctx context.Context, cachePath, format string, download f
 		return "", err
 	}
 
-	img, err := decodeThumbnailSource(srcPath, format)
+	var img image.Image
+	if isVideoFormat(format) {
+		img, err = decodeVideoPoster(ctx, srcPath)
+	} else {
+		img, err = decodeThumbnailSource(srcPath, format)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -212,6 +225,127 @@ func generateThumbnail(ctx context.Context, cachePath, format string, download f
 		return "", err
 	}
 	return jpegDataURL(data), nil
+}
+
+// logFFmpegMissing records that the ffmpeg binary is not on PATH. Later
+// videos fail the same way without repeating the warning.
+func logFFmpegMissing() {
+	if ffmpegMissingLogged.CompareAndSwap(false, true) {
+		slog.Warn(ffmpegMissingWarning)
+	}
+}
+
+func contextDone(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// decodeVideoPoster extracts one JPEG frame with ffmpeg and decodes that
+// frame. The video file itself is never passed to an image decoder. The frame
+// at one second is preferred; a shorter clip is tried from the start.
+func decodeVideoPoster(ctx context.Context, srcPath string) (image.Image, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			logFFmpegMissing()
+		}
+		return nil, fmt.Errorf("ffmpeg not available: %w", err)
+	}
+
+	poster, err := os.CreateTemp("", "photobridge-poster-*.jpg")
+	if err != nil {
+		return nil, fmt.Errorf("create temporary frame: %w", err)
+	}
+	posterPath := poster.Name()
+	if err := poster.Close(); err != nil {
+		_ = os.Remove(posterPath)
+		return nil, fmt.Errorf("create temporary frame: %w", err)
+	}
+	defer func() { _ = os.Remove(posterPath) }()
+
+	err = extractVideoFrame(ctx, ffmpeg, srcPath, posterPath, "00:00:01")
+	if err != nil {
+		if contextDone(err) || errors.Is(err, exec.ErrNotFound) {
+			return nil, err
+		}
+		if err2 := extractVideoFrame(ctx, ffmpeg, srcPath, posterPath, "00:00:00"); err2 != nil {
+			return nil, err2
+		}
+	}
+	return decodeJPEGFile(posterPath)
+}
+
+// extractVideoFrame runs:
+//
+//	ffmpeg -y -nostdin -i <src> -ss <timestamp> -vframes 1 -f image2 <dst>
+//
+// A missing binary is exec.ErrNotFound (the process never starts). A non-zero
+// exit after ffmpeg has started is exec.ExitError and is returned as-is.
+func extractVideoFrame(ctx context.Context, ffmpegPath, srcPath, dstPath, timestamp string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, ffmpegPath,
+		"-y", "-nostdin",
+		"-i", srcPath,
+		"-ss", timestamp,
+		"-vframes", "1",
+		"-f", "image2",
+		dstPath,
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	hideFFmpegWindow(cmd)
+	if err := cmd.Run(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			logFFmpegMissing()
+		}
+		detail := strings.TrimSpace(stderr.String())
+		if len(detail) > 512 {
+			detail = detail[:512]
+		}
+		if detail != "" {
+			return fmt.Errorf("extract video frame at %s: %w (%s)", timestamp, err, detail)
+		}
+		return fmt.Errorf("extract video frame at %s: %w", timestamp, err)
+	}
+	if !jpegFileReady(dstPath) {
+		return fmt.Errorf("extract video frame at %s: ffmpeg wrote no JPEG", timestamp)
+	}
+	return nil
+}
+
+func jpegFileReady(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var magic [3]byte
+	n, err := f.Read(magic[:])
+	return err == nil && n == 3 && magic[0] == 0xFF && magic[1] == 0xD8
+}
+
+func decodeJPEGFile(path string) (image.Image, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open extracted frame: %w", err)
+	}
+	defer f.Close()
+	img, err := jpeg.Decode(f)
+	if err != nil {
+		return nil, fmt.Errorf("decode extracted frame: %w", err)
+	}
+	if img == nil {
+		return nil, errors.New("extracted frame is empty")
+	}
+	b := img.Bounds()
+	if b.Dx() <= 0 || b.Dy() <= 0 {
+		return nil, errors.New("extracted frame has no pixels")
+	}
+	return img, nil
 }
 
 func decodeThumbnailSource(path, format string) (image.Image, error) {

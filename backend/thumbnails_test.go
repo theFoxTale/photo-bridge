@@ -5,12 +5,16 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -178,11 +182,9 @@ func TestCachedThumbnailRejectsUnsupported(t *testing.T) {
 		return nil
 	}
 
-	for _, photoID := range []string{"100APPLE/IMG_0001.MOV", "100APPLE/IMG_0001.DNG"} {
-		_, err := cachedThumbnail(context.Background(), "device-1", photoID, download)
-		if err == nil {
-			t.Fatalf("cachedThumbnail(%s) succeeded", photoID)
-		}
+	_, err := cachedThumbnail(context.Background(), "device-1", "100APPLE/IMG_0001.DNG", download)
+	if err == nil {
+		t.Fatal("cachedThumbnail(DNG) succeeded")
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("download calls = %d, want 0", calls.Load())
@@ -229,6 +231,162 @@ func TestThumbnailPathStaysInCache(t *testing.T) {
 	}
 	if got, err := sanitizeCacheSegment("CON"); err != nil || got != "_CON" {
 		t.Fatalf("sanitize CON = %q, %v", got, err)
+	}
+}
+
+func TestCachedThumbnailVideoFrame(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("APPDATA", root)
+	src := filepath.Join(t.TempDir(), "clip.mp4")
+	writeTestVideo(t, src, "red", 800, 400, 2)
+
+	var srcPath string
+	download := func(_ context.Context, dest string) error {
+		srcPath = dest
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(dest, data, 0o644)
+	}
+
+	url, err := cachedThumbnail(context.Background(), "device-1", "100APPLE/CLIP.MP4", download)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := decodeJPEGDataURL(t, url)
+	if got := img.Bounds().Size(); got.X != 400 || got.Y != 200 {
+		t.Fatalf("size = %v, want 400x200", got)
+	}
+	if _, err := os.Stat(srcPath); !os.IsNotExist(err) {
+		t.Fatalf("temp original %q still present: %v", srcPath, err)
+	}
+	cacheFile := filepath.Join(root, "PhotoBridge", "thumbnails", "device-1", "100APPLE_CLIP.MP4.jpg")
+	if _, err := os.Stat(cacheFile); err != nil {
+		t.Fatalf("cache file: %v", err)
+	}
+}
+
+func TestCachedThumbnailShortVideoFallsBackToStart(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	dir := t.TempDir()
+	src := filepath.Join(dir, "short.mov")
+	writeTestVideo(t, src, "blue", 200, 100, 0.2)
+
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	late := filepath.Join(dir, "late.jpg")
+	if err := extractVideoFrame(context.Background(), ffmpeg, src, late, "00:00:01"); err == nil {
+		t.Fatal("a 0.2s clip should not yield a frame at 1s")
+	}
+
+	download := func(_ context.Context, dest string) error {
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(dest, data, 0o644)
+	}
+	url, err := cachedThumbnail(context.Background(), "device-1", "100APPLE/SHORT.MOV", download)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := decodeJPEGDataURL(t, url)
+	if got := img.Bounds().Size(); got.X != 200 || got.Y != 100 {
+		t.Fatalf("size = %v, want 200x100", got)
+	}
+}
+
+func TestCachedThumbnailVideoGarbageLeavesNoTemp(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("APPDATA", root)
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+
+	var srcPath string
+	download := func(_ context.Context, dest string) error {
+		srcPath = dest
+		return os.WriteFile(dest, []byte("not a video"), 0o644)
+	}
+	_, err := cachedThumbnail(context.Background(), "device-1", "100APPLE/BAD.MP4", download)
+	if err == nil {
+		t.Fatal("expected ffmpeg to reject the file")
+	}
+	if _, statErr := os.Stat(srcPath); !os.IsNotExist(statErr) {
+		t.Fatalf("temp original %q still present: %v", srcPath, statErr)
+	}
+	cacheDir := filepath.Join(root, "PhotoBridge", "thumbnails")
+	entries, readErr := os.ReadDir(cacheDir)
+	if readErr == nil && len(entries) != 0 {
+		t.Fatalf("cache dir has entries after a failed video preview: %d", len(entries))
+	}
+}
+
+func TestExtractVideoFrameLogsWhenBinaryMissing(t *testing.T) {
+	ffmpegMissingLogged.Store(false)
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	err := extractVideoFrame(context.Background(), "ffmpeg-does-not-exist", "in.mov", filepath.Join(t.TempDir(), "out.jpg"), "00:00:01")
+	if !errors.Is(err, exec.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+	if !strings.Contains(buf.String(), ffmpegMissingWarning) {
+		t.Fatalf("log = %q", buf.String())
+	}
+
+	buf.Reset()
+	_ = extractVideoFrame(context.Background(), "ffmpeg-does-not-exist", "in.mov", filepath.Join(t.TempDir(), "out.jpg"), "00:00:00")
+	if buf.Len() != 0 {
+		t.Fatalf("warning logged twice: %s", buf.String())
+	}
+}
+
+func TestExtractVideoFrameExitErrorIsNotMissing(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	ffmpegMissingLogged.Store(false)
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	err = extractVideoFrame(context.Background(), ffmpeg, filepath.Join(t.TempDir(), "missing.mov"), filepath.Join(t.TempDir(), "out.jpg"), "00:00:01")
+	if err == nil {
+		t.Fatal("expected ffmpeg to fail")
+	}
+	if errors.Is(err, exec.ErrNotFound) {
+		t.Fatalf("err = %v, ffmpeg should have started", err)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("err = %T %v, want ExitError", err, err)
+	}
+	if strings.Contains(buf.String(), ffmpegMissingWarning) {
+		t.Fatalf("log = %q", buf.String())
+	}
+}
+
+func writeTestVideo(t *testing.T, path, color string, w, h int, seconds float64) {
+	t.Helper()
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := fmt.Sprintf("color=c=%s:s=%dx%d:r=25:d=%s", color, w, h, strconv.FormatFloat(seconds, 'f', -1, 64))
+	cmd := exec.Command("ffmpeg", "-y", "-f", "lavfi", "-i", spec, "-pix_fmt", "yuv420p", path)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("ffmpeg fixture: %v\n%s", err, out)
 	}
 }
 

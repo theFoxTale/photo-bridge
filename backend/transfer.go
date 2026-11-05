@@ -432,7 +432,14 @@ func (r *transferRun) plan(info Photo, name string, when time.Time, known bool) 
 	jpgCapable := info.Format == "heic" || info.Format == "jpeg"
 	wantOriginal := r.opts.SaveOriginal
 	wantJPG := r.opts.SaveJPG && jpgCapable
-	if r.opts.SaveJPG && !jpgCapable && !wantOriginal {
+	switch {
+	case info.IsVideo || isVideoFormat(info.Format):
+		// Videos are copied as the original file. A JPG is never produced.
+		wantJPG = false
+		if r.opts.SaveJPG && !wantOriginal {
+			return p, errors.New("Cannot convert video to JPG")
+		}
+	case r.opts.SaveJPG && !jpgCapable && !wantOriginal:
 		return p, fmt.Errorf("JPG conversion is not supported for %s files", strings.ToUpper(info.Format))
 	}
 	// A JPEG original already is a JPG; a second, re-encoded copy would only

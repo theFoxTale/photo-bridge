@@ -82,7 +82,10 @@ func TestRollDisplayName(t *testing.T) {
 }
 
 func TestFormatOf(t *testing.T) {
-	cases := map[string]string{"a.HEIC": "heic", "a.jpg": "jpeg", "a.JPEG": "jpeg", "a.png": "png", "a.DNG": "dng", "a.MOV": "mov"}
+	cases := map[string]string{
+		"a.HEIC": "heic", "a.jpg": "jpeg", "a.JPEG": "jpeg", "a.png": "png",
+		"a.DNG": "dng", "a.MOV": "mov", "a.mp4": "mp4", "b.MP4": "mp4",
+	}
 	for name, want := range cases {
 		if got, ok := formatOf(name); !ok || got != want {
 			t.Errorf("formatOf(%q) = %q, %v", name, got, ok)
@@ -92,5 +95,21 @@ func TestFormatOf(t *testing.T) {
 		if _, ok := formatOf(name); ok {
 			t.Errorf("formatOf(%q) = ok, want not ok", name)
 		}
+	}
+}
+
+func TestBuildPhotoMarksVideo(t *testing.T) {
+	taken := time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)
+	mov := buildPhoto(cameraRollID, "/DCIM/100APPLE/IMG_0001.MOV", fileStat{size: 12, mtime: taken})
+	if !mov.IsVideo || mov.Format != "mov" || mov.Filename != "IMG_0001.MOV" {
+		t.Fatalf("mov = %+v", mov)
+	}
+	mp4 := buildPhoto(cameraRollID, "/DCIM/100APPLE/CLIP.MP4", fileStat{size: 12, mtime: taken})
+	if !mp4.IsVideo || mp4.Format != "mp4" {
+		t.Fatalf("mp4 = %+v", mp4)
+	}
+	jpg := buildPhoto(cameraRollID, "/DCIM/100APPLE/IMG_0001.JPG", fileStat{size: 12, mtime: taken})
+	if jpg.IsVideo || jpg.Format != "jpeg" {
+		t.Fatalf("jpg = %+v", jpg)
 	}
 }

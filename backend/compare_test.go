@@ -93,11 +93,9 @@ func TestRunCompareClassifies(t *testing.T) {
 	if got := photoIDs(res.AlreadyOnPC); len(got) != 1 || got[0] != "100/IMG_A.JPG" {
 		t.Errorf("AlreadyOnPC = %v", got)
 	}
-	if !containsID(res.NewOnDevice, "100/IMG_B.JPG") || !containsID(res.NewOnDevice, "100/IMG_H.HEIC") {
-		t.Errorf("NewOnDevice = %v, want IMG_B and IMG_H", photoIDs(res.NewOnDevice))
-	}
-	if containsID(res.NewOnDevice, "100/MOV_1.MOV") {
-		t.Error("videos must not be compared")
+	if !containsID(res.NewOnDevice, "100/IMG_B.JPG") || !containsID(res.NewOnDevice, "100/IMG_H.HEIC") ||
+		!containsID(res.NewOnDevice, "100/MOV_1.MOV") {
+		t.Errorf("NewOnDevice = %v, want IMG_B, IMG_H and MOV_1", photoIDs(res.NewOnDevice))
 	}
 	if len(res.Conflicts) != 1 || res.Conflicts[0].Photo.ID != "100/IMG_C.JPG" ||
 		res.Conflicts[0].Reason != "content differs" ||
@@ -252,6 +250,44 @@ func TestRunCompareEmptyEverything(t *testing.T) {
 	}
 	if res.NewOnDevice == nil || res.AlreadyOnPC == nil || res.Conflicts == nil || res.MissingOnPC == nil {
 		t.Errorf("lists must be empty, not nil (they are sent to JSON): %+v", res)
+	}
+}
+
+func TestRunCompareMatchesVideosBySizeAndDate(t *testing.T) {
+	dir := t.TempDir()
+	lib := newFakeLibrary()
+
+	same := []byte("video-same-bytes")
+	lib.addListed("100/CLIP.MOV", "CLIP.MOV", "mov", compareDate(1).Format(time.RFC3339), same)
+	writeLocal(t, filepath.Join(dir, "CLIP.MOV"), same, compareDate(1))
+
+	devDiff := []byte("video-conflict!")
+	localDiff := []byte("video-conflict?")
+	if len(devDiff) != len(localDiff) {
+		t.Fatal("conflict fixtures must have the same size")
+	}
+	lib.addListed("100/OTHER.MP4", "OTHER.MP4", "mp4", compareDate(2).Format(time.RFC3339), devDiff)
+	writeLocal(t, filepath.Join(dir, "OTHER.MP4"), localDiff, compareDate(2))
+
+	lib.addListed("100/NEW.MOV", "NEW.MOV", "mov", compareDate(3).Format(time.RFC3339), []byte("only-on-phone"))
+	writeLocal(t, filepath.Join(dir, "only_local.mp4"), []byte("only-on-pc"), compareDate(4))
+
+	res, err := RunCompare(context.Background(), lib, nil, "dev", dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := photoIDs(res.AlreadyOnPC); len(got) != 1 || got[0] != "100/CLIP.MOV" || !res.AlreadyOnPC[0].IsVideo {
+		t.Errorf("AlreadyOnPC = %+v", res.AlreadyOnPC)
+	}
+	if !containsID(res.NewOnDevice, "100/NEW.MOV") || len(res.NewOnDevice) != 1 {
+		t.Errorf("NewOnDevice = %v", photoIDs(res.NewOnDevice))
+	}
+	if len(res.Conflicts) != 1 || res.Conflicts[0].Photo.ID != "100/OTHER.MP4" || !res.Conflicts[0].Photo.IsVideo ||
+		res.Conflicts[0].Reason != reasonContentDiffers {
+		t.Errorf("Conflicts = %+v", res.Conflicts)
+	}
+	if len(res.MissingOnPC) != 1 || res.MissingOnPC[0].Filename != "only_local.mp4" {
+		t.Errorf("MissingOnPC = %+v", res.MissingOnPC)
 	}
 }
 

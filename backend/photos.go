@@ -8,13 +8,19 @@ type Photo struct {
 	Filename string `json:"filename"`
 	Date     string `json:"date"`   // ISO 8601
 	Size     int64  `json:"size"`   // bytes
-	Format   string `json:"format"` // "heic" | "jpeg" | "dng" | "png"
+	Format   string `json:"format"` // "heic" | "jpeg" | "dng" | "png" | "mov" | "mp4"
+	IsVideo  bool   `json:"isVideo"`
 	Width    int    `json:"width"`
 	Height   int    `json:"height"`
 	AlbumID  string `json:"albumId"`
 	// ThumbURL is a base64 JPEG data URL of a preview. FetchPhotos leaves it
 	// empty on purpose; thumbnails are fetched lazily through FetchThumbnail.
 	ThumbURL string `json:"thumbUrl"`
+}
+
+// isVideoFormat reports whether format is a video the app can list and copy.
+func isVideoFormat(format string) bool {
+	return format == "mov" || format == "mp4"
 }
 
 // Album groups photos on a device.
