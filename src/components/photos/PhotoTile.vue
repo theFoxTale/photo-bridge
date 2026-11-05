@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { SyncStatus } from '../../types/compare'
 import type { Photo } from '../../types/photo'
 
@@ -19,6 +20,7 @@ const emit = defineEmits<{
   visible: []
 }>()
 
+const { t } = useI18n()
 const root = ref<HTMLElement | null>(null)
 let observer: IntersectionObserver | null = null
 
@@ -58,25 +60,37 @@ function onTileClick(event: MouseEvent): void {
 const statusNote = computed(() => {
   switch (props.syncStatus) {
     case 'synced':
-      return ', already on this PC'
+      return t('photos.ariaSyncedSuffix')
     case 'conflict':
-      return ', conflicts with a file on this PC'
+      return t('photos.ariaConflictSuffix')
     default:
       return ''
   }
 })
 
 const ariaLabel = computed(() => {
-  const action = props.selected ? 'Selected' : 'Select'
+  const action = props.selected ? t('photos.ariaSelected') : t('photos.ariaSelect')
   const kind = props.photo.isLivePhoto
-    ? 'Live Photo '
+    ? `${t('photos.kindLive')} `
     : props.photo.isVideo
-      ? 'video '
+      ? `${t('photos.kindVideo')} `
       : props.photo.format === 'dng'
-        ? 'RAW '
+        ? `${t('photos.kindRaw')} `
         : ''
-  return `${action} ${kind}${props.photo.filename}${statusNote.value}`
+  return t('photos.ariaTile', {
+    action,
+    kind,
+    filename: props.photo.filename,
+    status: statusNote.value,
+  })
 })
+
+const checkboxLabel = computed(() =>
+  t('photos.checkbox', {
+    action: props.selected ? t('photos.ariaDeselect') : t('photos.ariaSelect'),
+    filename: props.photo.filename,
+  }),
+)
 
 const showVideoChrome = computed(() => props.photo.isVideo && (props.thumbUrl !== null || props.thumbFailed))
 </script>
@@ -125,7 +139,7 @@ const showVideoChrome = computed(() => props.photo.isVideo && (props.thumbUrl !=
           <rect x="3" y="5" width="18" height="14" rx="2" />
           <path d="m4 4 16 16" />
         </svg>
-        Preview unavailable
+        {{ $t('photos.previewUnavailable') }}
       </span>
       <span
         v-else
@@ -150,7 +164,7 @@ const showVideoChrome = computed(() => props.photo.isVideo && (props.thumbUrl !=
       <span
         v-if="syncStatus === 'synced'"
         class="pointer-events-none absolute left-2 top-2 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white shadow"
-        title="Already on this PC"
+        :title="$t('photos.alreadyOnPc')"
       >
         <svg
           class="h-3 w-3"
@@ -164,12 +178,12 @@ const showVideoChrome = computed(() => props.photo.isVideo && (props.thumbUrl !=
         >
           <path d="M20 6 9 17l-5-5" />
         </svg>
-        <span class="sr-only">Already on this PC</span>
+        <span class="sr-only">{{ $t('photos.alreadyOnPc') }}</span>
       </span>
       <span
         v-else-if="syncStatus === 'conflict'"
         class="pointer-events-none absolute left-2 top-2 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-white shadow"
-        title="Conflicts with a file on this PC"
+        :title="$t('photos.conflict')"
       >
         <svg
           class="h-3.5 w-3.5"
@@ -184,14 +198,14 @@ const showVideoChrome = computed(() => props.photo.isVideo && (props.thumbUrl !=
           <path d="M12 9v4M12 17h.01" />
           <path d="M10.3 4.3 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0z" />
         </svg>
-        <span class="sr-only">Conflicts with a file on this PC</span>
+        <span class="sr-only">{{ $t('photos.conflict') }}</span>
       </span>
 
       <span
         v-if="photo.isLivePhoto"
         class="pointer-events-none absolute top-2 flex items-center gap-1 rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white"
         :class="syncStatus === 'synced' || syncStatus === 'conflict' ? 'left-8' : 'left-2'"
-        title="Live Photo"
+        :title="$t('photos.livePhoto')"
       >
         <svg class="h-3 w-3" viewBox="0 0 16 16" aria-hidden="true">
           <circle cx="8" cy="8" r="2.1" fill="currentColor" />
@@ -221,7 +235,7 @@ const showVideoChrome = computed(() => props.photo.isVideo && (props.thumbUrl !=
       type="button"
       role="checkbox"
       :aria-checked="selected"
-      :aria-label="`${selected ? 'Deselect' : 'Select'} ${photo.filename}`"
+      :aria-label="checkboxLabel"
       class="absolute right-2 top-2 flex h-5 w-5 items-center justify-center rounded-full border text-white shadow transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
       :class="
         selected

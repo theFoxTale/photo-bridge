@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useDeviceDiscovery } from '../../composables/useDeviceDiscovery'
 import { usePhotoLibrary } from '../../composables/usePhotoLibrary'
 import type { Album } from '../../types/album'
+import { translateError } from '../../utils/errors'
 
 const DEVICE_FOLDERS_KEY = 'photobridge.deviceFoldersExpanded'
 const CAMERA_ROLL_ID = 'camera-roll'
 const DEVICE_FOLDER_PREFIX = 'roll-'
 
+const { t } = useI18n()
 const { devices, status, activeDeviceId, activeDevice, error, refresh, selectDevice } =
   useDeviceDiscovery()
 const {
@@ -73,6 +76,11 @@ const sidebarRows = computed((): SidebarRow[] => {
   return rows
 })
 
+function albumTitle(album: Album): string {
+  if (album.id === CAMERA_ROLL_ID) return t('albums.cameraRoll')
+  return album.name
+}
+
 function albumClass(id: string): string {
   if (id === activeAlbumId.value) {
     return 'bg-blue-500/10 font-medium text-blue-700 dark:text-blue-300'
@@ -84,11 +92,11 @@ function albumClass(id: string): string {
 <template>
   <aside
     class="flex w-[260px] shrink-0 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"
-    aria-label="Device"
+    :aria-label="$t('devices.title')"
   >
     <div class="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
       <h2 class="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-        Device
+        {{ $t('devices.title') }}
       </h2>
     </div>
 
@@ -109,7 +117,7 @@ function albumClass(id: string): string {
           />
         </div>
         <p class="pt-2 text-center text-xs text-zinc-500 dark:text-zinc-400">
-          Searching for devices…
+          {{ $t('devices.searching') }}
         </p>
       </div>
 
@@ -132,16 +140,16 @@ function albumClass(id: string): string {
           <circle cx="12" cy="12" r="10" />
           <path d="M12 8v4M12 16h.01" />
         </svg>
-        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Device search failed</p>
+        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">{{ $t('devices.searchFailed') }}</p>
         <p class="mt-1 break-words text-xs text-zinc-500 dark:text-zinc-400">
-          {{ error ?? 'Unknown error' }}
+          {{ error ? translateError(error) : $t('errors.unknown') }}
         </p>
         <button
           type="button"
           class="mt-3 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
           @click="refresh"
         >
-          Try again
+          {{ $t('devices.tryAgain') }}
         </button>
       </div>
 
@@ -164,17 +172,16 @@ function albumClass(id: string): string {
           <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
           <path d="M12 9v4M12 17h.01" />
         </svg>
-        <p class="text-sm font-medium text-amber-700 dark:text-amber-300">Apple Devices can't see your iPhone</p>
+        <p class="text-sm font-medium text-amber-700 dark:text-amber-300">{{ $t('devices.blockedTitle') }}</p>
         <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-          iPhone found on Wi-Fi, but Apple Devices cannot see it. Please open Apple Devices on your
-          PC, connect your iPhone via USB, and enable 'Show this iPhone when on Wi-Fi'.
+          {{ $t('devices.blockedBody') }}
         </p>
         <button
           type="button"
           class="mt-3 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-amber-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
           @click="refresh"
         >
-          Retry
+          {{ $t('devices.retry') }}
         </button>
       </div>
 
@@ -196,28 +203,28 @@ function albumClass(id: string): string {
           <rect x="7" y="2" width="10" height="20" rx="2" />
           <path d="M11 18h2" />
         </svg>
-        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">No device found</p>
+        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">{{ $t('devices.none') }}</p>
         <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          Make sure your phone is on the same Wi-Fi network.
+          {{ $t('devices.noneHint') }}
         </p>
         <button
           type="button"
           class="mt-3 rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
           @click="refresh"
         >
-          Search again
+          {{ $t('devices.searchAgain') }}
         </button>
       </div>
 
       <!-- Devices + album tree -->
       <div v-else class="space-y-4">
-        <section aria-label="Devices">
+        <section :aria-label="$t('devices.list')">
           <p
             v-if="status === 'searching'"
             class="mb-1 px-2 text-xs text-zinc-500 dark:text-zinc-400"
             aria-live="polite"
           >
-            Searching…
+            {{ $t('devices.searchingShort') }}
           </p>
           <ul class="space-y-0.5">
             <li v-for="device in devices" :key="device.id">
@@ -263,12 +270,12 @@ function albumClass(id: string): string {
         <nav
           v-if="activeDevice"
           class="border-t border-zinc-200 pt-3 dark:border-zinc-800"
-          aria-label="Albums"
+          :aria-label="$t('albums.nav')"
         >
           <p
             class="mb-1 truncate px-2 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
           >
-            Albums · {{ activeDevice.name }}
+            {{ $t('albums.heading', { name: activeDevice.name }) }}
           </p>
           <div
             v-if="albums.length === 0 && isLoadingLibrary"
@@ -285,7 +292,7 @@ function albumClass(id: string): string {
             v-else-if="albums.length === 0"
             class="ml-2 border-l border-zinc-200 px-2 py-1.5 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400"
           >
-            No albums
+            {{ $t('albums.none') }}
           </p>
           <ul v-else class="ml-2 space-y-0.5 border-l border-zinc-200 pl-2 dark:border-zinc-800">
             <li
@@ -313,7 +320,7 @@ function albumClass(id: string): string {
                 >
                   <path d="m9 18 6-6-6-6" />
                 </svg>
-                <span class="min-w-0 flex-1 truncate">Device Folders (Advanced)</span>
+                <span class="min-w-0 flex-1 truncate">{{ $t('albums.deviceFolders') }} ({{ $t('albums.advanced') }})</span>
                 <span class="shrink-0 tabular-nums">{{ deviceFolders.length }}</span>
               </button>
               <button
@@ -336,7 +343,7 @@ function albumClass(id: string): string {
                 >
                   <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
                 </svg>
-                <span class="min-w-0 flex-1 truncate">{{ row.album.name }}</span>
+                <span class="min-w-0 flex-1 truncate">{{ albumTitle(row.album) }}</span>
                 <span class="shrink-0 text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
                   {{ row.album.count }}
                 </span>

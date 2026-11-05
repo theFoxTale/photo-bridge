@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useTransferStore } from '../../stores/transferStore'
 import { formatSpeed } from '../../utils/format'
 
+const { t } = useI18n()
 const transferStore = useTransferStore()
 const { isRunning, isCancelling, progress } = storeToRefs(transferStore)
 
@@ -17,12 +19,16 @@ const percent = computed(() => {
 const summary = computed(() => {
   const p = progress.value
   if (!p) return ''
-  return `${p.completed} of ${p.total} files · ${formatSpeed(p.bytesPerSec)} ·`
+  return t('progress.summary', {
+    completed: p.completed,
+    total: p.total,
+    speed: formatSpeed(p.bytesPerSec),
+  })
 })
 
 const currentFile = computed(() => {
-  if (isCancelling.value) return 'Cancelling…'
-  return progress.value?.currentFile || 'Starting…'
+  if (isCancelling.value) return t('progress.cancelling')
+  return progress.value?.currentFile || t('progress.starting')
 })
 </script>
 
@@ -32,14 +38,14 @@ const currentFile = computed(() => {
   >
     <div v-if="!isRunning || !progress" class="flex items-center gap-2 text-zinc-500 dark:text-zinc-400">
       <span class="h-2 w-2 rounded-full bg-zinc-400 dark:bg-zinc-600" />
-      <span>Idle</span>
+      <span>{{ $t('progress.idle') }}</span>
     </div>
 
     <div v-else class="flex w-full items-center gap-4">
       <div
         class="h-2 flex-1 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
         role="progressbar"
-        aria-label="Transfer progress"
+        :aria-label="$t('progress.aria')"
         aria-valuemin="0"
         aria-valuemax="100"
         :aria-valuenow="percent"

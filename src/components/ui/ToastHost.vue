@@ -47,7 +47,7 @@ const styles: Record<ToastKind, { box: string; dot: string }> = {
         <button
           type="button"
           class="shrink-0 rounded p-0.5 opacity-60 hover:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-          aria-label="Dismiss notification"
+          :aria-label="$t('toast.dismiss')"
           @click="toastStore.dismiss(toast.id)"
         >
           <svg

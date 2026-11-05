@@ -1,16 +1,15 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useDeviceDiscovery } from '../../composables/useDeviceDiscovery'
 import { usePhotoStore } from '../../stores/photoStore'
+import { translateError } from '../../utils/errors'
+import SettingsModal from './SettingsModal.vue'
 
-defineProps<{
-  isDark: boolean
-}>()
-
-const emit = defineEmits<{
-  toggleTheme: []
-}>()
+const { t } = useI18n()
+const settingsOpen = ref(false)
+const settingsButton = ref<HTMLButtonElement | null>(null)
 
 const { status, activeDevice, error, refresh, stopDiscovery } = useDeviceDiscovery()
 const { searchQuery } = storeToRefs(usePhotoStore())
@@ -19,28 +18,30 @@ const pill = computed(() => {
   switch (status.value) {
     case 'searching':
       return {
-        label: 'Searching',
+        label: t('status.searching'),
         pill: 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300',
         dot: 'bg-amber-500 animate-pulse',
         animate: 'animate-pulse',
       }
     case 'blocked_by_apple':
       return {
-        label: 'Blocked by Apple Devices',
+        label: t('status.blocked'),
         pill: 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300',
         dot: 'bg-amber-500',
         animate: '',
       }
     case 'connected':
       return {
-        label: activeDevice.value ? `Connected: ${activeDevice.value.name}` : 'Connected',
+        label: activeDevice.value
+          ? t('status.connected', { name: activeDevice.value.name })
+          : t('status.connectedPlain'),
         pill: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
         dot: 'bg-emerald-500',
         animate: '',
       }
     default:
       return {
-        label: 'Disconnected',
+        label: t('status.disconnected'),
         pill: 'border-zinc-400/40 bg-zinc-500/10 text-zinc-600 dark:text-zinc-400',
         dot: 'bg-zinc-400 dark:bg-zinc-500',
         animate: '',
@@ -49,13 +50,18 @@ const pill = computed(() => {
 })
 
 const pillTitle = computed(() => {
-  if (status.value === 'searching') return 'Click to stop searching'
-  if (status.value === 'blocked_by_apple') {
-    return 'iPhone found on Wi-Fi, but Apple Devices cannot see it. Click to retry.'
+  if (status.value === 'searching') return t('status.clickStop')
+  if (status.value === 'blocked_by_apple') return t('status.clickRetryBlocked')
+  if (status.value === 'error' && error.value) {
+    return t('status.discoveryFailed', { error: translateError(error.value) })
   }
-  if (status.value === 'error' && error.value) return `Discovery failed: ${error.value}. Click to retry.`
-  return 'Click to search for devices'
+  return t('status.clickSearch')
 })
+
+function closeSettings(): void {
+  settingsOpen.value = false
+  settingsButton.value?.focus()
+}
 
 async function onPillClick(): Promise<void> {
   if (status.value === 'searching') {
@@ -86,7 +92,7 @@ async function onPillClick(): Promise<void> {
         <path d="m21 16-5-5-9 8" />
       </svg>
       <h1 class="truncate text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
-        Photo Bridge
+        {{ $t('app.title') }}
       </h1>
     </div>
 
@@ -107,16 +113,16 @@ async function onPillClick(): Promise<void> {
       <input
         v-model="searchQuery"
         type="search"
-        placeholder="Search photos"
+        :placeholder="$t('search.placeholder')"
         autocomplete="off"
-        aria-label="Search photos by file name"
+        :aria-label="$t('search.aria')"
         class="h-8 w-full rounded-full border border-zinc-300 bg-zinc-50 pl-9 pr-8 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:placeholder:text-zinc-500 [&::-webkit-search-cancel-button]:hidden"
       />
       <button
         v-if="searchQuery !== ''"
         type="button"
         class="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-100"
-        aria-label="Clear search"
+        :aria-label="$t('search.clear')"
         @click="searchQuery = ''"
       >
         <svg
@@ -140,7 +146,7 @@ async function onPillClick(): Promise<void> {
         class="flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
         :class="pill.pill"
         :title="pillTitle"
-        :aria-label="`Connection status: ${pill.label}. ${pillTitle}`"
+        :aria-label="$t('status.aria', { label: pill.label, hint: pillTitle })"
         @click="onPillClick"
       >
         <span class="h-2 w-2 rounded-full" :class="pill.dot" />
@@ -148,14 +154,15 @@ async function onPillClick(): Promise<void> {
       </button>
 
       <button
+        ref="settingsButton"
         type="button"
         class="flex h-8 w-8 items-center justify-center rounded-md text-zinc-600 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-zinc-300 dark:hover:bg-zinc-800"
-        :aria-label="isDark ? 'Switch to light theme' : 'Switch to dark theme'"
-        :title="isDark ? 'Switch to light theme' : 'Switch to dark theme'"
-        @click="emit('toggleTheme')"
+        :aria-label="$t('settings.open')"
+        :title="$t('settings.open')"
+        :aria-expanded="settingsOpen"
+        @click="settingsOpen = true"
       >
         <svg
-          v-if="isDark"
           class="h-5 w-5"
           viewBox="0 0 24 24"
           fill="none"
@@ -165,25 +172,13 @@ async function onPillClick(): Promise<void> {
           stroke-linejoin="round"
           aria-hidden="true"
         >
-          <circle cx="12" cy="12" r="4" />
+          <circle cx="12" cy="12" r="3" />
           <path
-            d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
+            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
           />
-        </svg>
-        <svg
-          v-else
-          class="h-5 w-5"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
         </svg>
       </button>
     </div>
   </header>
+  <SettingsModal :open="settingsOpen" @close="closeSettings" />
 </template>

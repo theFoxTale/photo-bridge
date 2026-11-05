@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useDeviceDiscovery } from '../../composables/useDeviceDiscovery'
 import { usePhotoLibrary } from '../../composables/usePhotoLibrary'
 import type { MediaFilter } from '../../stores/photoStore'
+import type { Album } from '../../types/album'
 import type { Photo } from '../../types/photo'
+import { translateError } from '../../utils/errors'
 import PhotoTile from './PhotoTile.vue'
 
+const { t, locale } = useI18n()
 const { activeDeviceId, status } = useDeviceDiscovery()
 const {
   store,
@@ -31,21 +35,28 @@ const {
 const { groupedPhotos, filteredPhotos, activeFilter, filterCounts, visibleSelectedCount } =
   storeToRefs(store)
 
-const mediaFilters: readonly { id: MediaFilter; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'photo', label: 'Photos' },
-  { id: 'video', label: 'Videos' },
-  { id: 'raw', label: 'RAW' },
-  { id: 'live', label: 'Live' },
+const mediaFilters: readonly { id: MediaFilter; labelKey: 'filters.all' | 'filters.photos' | 'filters.videos' | 'filters.raw' | 'filters.live' }[] = [
+  { id: 'all', labelKey: 'filters.all' },
+  { id: 'photo', labelKey: 'filters.photos' },
+  { id: 'video', labelKey: 'filters.videos' },
+  { id: 'raw', labelKey: 'filters.raw' },
+  { id: 'live', labelKey: 'filters.live' },
 ]
 
-function filterLabel(filter: { id: MediaFilter; label: string }): string {
-  return `${filter.label} (${filterCounts.value[filter.id].toLocaleString()})`
+function filterLabel(filter: (typeof mediaFilters)[number]): string {
+  const count = filterCounts.value[filter.id].toLocaleString(locale.value)
+  return `${t(filter.labelKey)} (${count})`
 }
 
-const albumName = computed(
-  () => albums.value.find((album) => album.id === activeAlbumId.value)?.name ?? 'Photos',
-)
+function albumTitle(album: Album): string {
+  if (album.id === 'camera-roll') return t('albums.cameraRoll')
+  return album.name
+}
+
+const albumName = computed(() => {
+  const album = albums.value.find((item) => item.id === activeAlbumId.value)
+  return album ? albumTitle(album) : t('photos.section')
+})
 
 const isSearchingDevice = computed(
   () => activeDeviceId.value === null && status.value === 'searching',
@@ -83,16 +94,16 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
 </script>
 
 <template>
-  <section class="flex min-w-0 flex-1 flex-col bg-zinc-50 dark:bg-zinc-950" aria-label="Photos">
+  <section class="flex min-w-0 flex-1 flex-col bg-zinc-50 dark:bg-zinc-950" :aria-label="$t('photos.aria')">
     <div
       class="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-zinc-200 px-4 dark:border-zinc-800"
     >
       <h2 class="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
-        {{ activeDeviceId === null ? 'Photos' : albumName }}
+        {{ activeDeviceId === null ? $t('photos.section') : albumName }}
       </h2>
       <div v-if="photos.length > 0" class="flex shrink-0 items-center gap-3">
         <span class="text-xs text-zinc-500 dark:text-zinc-400" aria-live="polite">
-          {{ visibleSelectedCount }} of {{ filteredPhotos.length }} selected
+          {{ $t('photos.selectedOf', { selected: visibleSelectedCount, total: filteredPhotos.length }) }}
         </span>
         <button
           type="button"
@@ -100,7 +111,7 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
           :disabled="filteredPhotos.length === 0 || visibleSelectedCount === filteredPhotos.length"
           @click="selectAll"
         >
-          Select all
+          {{ $t('photos.selectAll') }}
         </button>
         <button
           type="button"
@@ -108,7 +119,7 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
           :disabled="selectedCount === 0"
           @click="clearSelection"
         >
-          Clear
+          {{ $t('photos.clear') }}
         </button>
       </div>
     </div>
@@ -118,14 +129,14 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
       class="shrink-0 border-b border-amber-500/30 bg-amber-500/10 px-4 py-1.5 text-center text-xs font-medium text-amber-700 dark:text-amber-300"
       role="status"
     >
-      Demo mode — showing sample photos
+      {{ $t('photos.demo') }}
     </div>
 
     <div
       v-if="showFilters"
       class="flex shrink-0 gap-2 overflow-x-auto border-b border-zinc-200 px-4 py-2 dark:border-zinc-800"
       role="toolbar"
-      aria-label="Filter photos"
+      :aria-label="$t('filters.aria')"
     >
       <button
         v-for="filter in mediaFilters"
@@ -178,9 +189,9 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
           <rect x="7" y="2" width="10" height="20" rx="2" />
           <path d="m3 3 18 18" />
         </svg>
-        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Device disconnected</p>
+        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">{{ $t('photos.disconnected') }}</p>
         <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          Reconnect your phone; it is picked up automatically.
+          {{ $t('photos.disconnectedHint') }}
         </p>
       </div>
 
@@ -203,9 +214,9 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
           <circle cx="9" cy="10" r="1.5" />
           <path d="m21 16-5-5-9 8" />
         </svg>
-        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">No photos to show</p>
+        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">{{ $t('photos.none') }}</p>
         <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          Connect a device to see its photos here.
+          {{ $t('photos.noneHint') }}
         </p>
       </div>
 
@@ -228,16 +239,16 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
           <circle cx="12" cy="12" r="10" />
           <path d="M12 8v4M12 16h.01" />
         </svg>
-        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Could not load photos</p>
+        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">{{ $t('photos.loadFailed') }}</p>
         <p class="mt-1 max-w-md break-words text-xs text-zinc-500 dark:text-zinc-400">
-          {{ error }}
+          {{ translateError(error) }}
         </p>
         <button
           type="button"
           class="mt-3 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
           @click="retry"
         >
-          Retry
+          {{ $t('photos.retry') }}
         </button>
       </div>
 
@@ -246,9 +257,9 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
         v-else-if="photos.length === 0"
         class="flex flex-1 flex-col items-center justify-center text-center"
       >
-        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">This album is empty</p>
+        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">{{ $t('photos.albumEmpty') }}</p>
         <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          Pick another album from the sidebar.
+          {{ $t('photos.albumEmptyHint') }}
         </p>
       </div>
 
@@ -271,16 +282,16 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
           <circle cx="11" cy="11" r="7" />
           <path d="m20 20-3.5-3.5" />
         </svg>
-        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">No photos found</p>
+        <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300">{{ $t('empty.noPhotos') }}</p>
         <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          Try adjusting your search or filters
+          {{ $t('photos.noPhotosHint') }}
         </p>
         <button
           type="button"
           class="mt-3 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
           @click="store.clearFilters()"
         >
-          Clear all filters
+          {{ $t('photos.clearFilters') }}
         </button>
       </div>
 

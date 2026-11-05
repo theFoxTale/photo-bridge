@@ -1,6 +1,7 @@
 import { useDebounceFn } from '@vueuse/shared'
 import { defineStore } from 'pinia'
 import { computed, reactive, ref, watch } from 'vue'
+import { i18n } from '../i18n'
 import type { Album } from '../types/album'
 import type { SyncStatus } from '../types/compare'
 import type { Photo } from '../types/photo'
@@ -53,12 +54,6 @@ function matchesMediaFilter(photo: Photo, filter: MediaFilter): boolean {
   }
 }
 
-const dayLabel = new Intl.DateTimeFormat(undefined, {
-  month: 'long',
-  day: 'numeric',
-  year: 'numeric',
-})
-
 /** Local midnight for `date`, so photos group by the day the user sees. */
 function startOfLocalDay(date: Date): number {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
@@ -73,11 +68,15 @@ function parsePhotoDate(value: string): Date | null {
 }
 
 function labelForDay(dayStart: number, todayStart: number): string {
-  if (dayStart === todayStart) return 'Today'
+  if (dayStart === todayStart) return i18n.global.t('dates.today')
   const yesterday = new Date(todayStart)
   yesterday.setDate(yesterday.getDate() - 1)
-  if (dayStart === yesterday.getTime()) return 'Yesterday'
-  return dayLabel.format(new Date(dayStart))
+  if (dayStart === yesterday.getTime()) return i18n.global.t('dates.yesterday')
+  return new Intl.DateTimeFormat(i18n.global.locale.value, {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(new Date(dayStart))
 }
 
 export const usePhotoStore = defineStore('photo', () => {
@@ -153,6 +152,8 @@ export const usePhotoStore = defineStore('photo', () => {
 
   /** Photos grouped by local calendar day, newest day first. Undated photos are last. */
   const groupedPhotos = computed((): PhotoGroup[] => {
+    // Read the locale so a language change rebuilds Today / Yesterday / month names.
+    void i18n.global.locale.value
     const todayStart = startOfLocalDay(new Date())
     const buckets = new Map<number, Photo[]>()
     const unknown: Photo[] = []
@@ -180,7 +181,7 @@ export const usePhotoStore = defineStore('photo', () => {
       }))
 
     if (unknown.length > 0) {
-      groups.push({ dateLabel: 'Unknown Date', photos: unknown })
+      groups.push({ dateLabel: i18n.global.t('dates.unknown'), photos: unknown })
     }
     return groups
   })

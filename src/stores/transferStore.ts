@@ -1,10 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
+import { i18n } from '../i18n'
 import type {
   TransferFormatOptions,
   TransferProgress,
   TransferResult,
 } from '../types/transfer'
+import { translateError } from '../utils/errors'
 import { formatBytes, formatDuration } from '../utils/format'
 import { useComparisonStore } from './comparisonStore'
 import { useDeviceStore } from './deviceStore'
@@ -78,21 +80,27 @@ export const useTransferStore = defineStore('transfer', () => {
 
   /** Shows the summary toast, for example "42 transferred · 1 failed · 128.4 MB in 12s". */
   function announce(outcome: TransferResult): void {
+    const t = i18n.global.t
     const parts = [
-      `${outcome.succeeded.length} transferred`,
-      `${outcome.failed.length} failed`,
-      `${formatBytes(outcome.bytesCopied)} in ${formatDuration(outcome.durationMs)}`,
+      t('toast.transferred', { count: outcome.succeeded.length }),
+      t('toast.failed', { count: outcome.failed.length }),
+      t('toast.bytesIn', {
+        size: formatBytes(outcome.bytesCopied),
+        duration: formatDuration(outcome.durationMs),
+      }),
     ]
-    const message = outcome.cancelled
-      ? `Cancelled · ${parts.join(' · ')}`
-      : parts.join(' · ')
+    const summary = parts.join(' · ')
+    const message = outcome.cancelled ? t('toast.cancelled', { summary }) : summary
 
     let detail: string | undefined
     const first = outcome.failed[0]
     if (first) {
       const more = outcome.failed.length - 1
-      detail = `${photoName(first.photoId)}: ${first.reason}`
-      if (more > 0) detail += ` (and ${more} more)`
+      detail = t('toast.failureDetail', {
+        name: photoName(first.photoId),
+        reason: translateError(first.reason),
+      })
+      if (more > 0) detail += t('toast.andMore', { count: more })
     }
 
     const nothingWorked = outcome.succeeded.length === 0 && outcome.failed.length > 0

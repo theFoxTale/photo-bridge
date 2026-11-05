@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted } from 'vue'
 import BottomBar from './components/layout/BottomBar.vue'
 import LeftSidebar from './components/layout/LeftSidebar.vue'
 import RightSidebar from './components/layout/RightSidebar.vue'
@@ -8,27 +8,15 @@ import PhotoGrid from './components/photos/PhotoGrid.vue'
 import ToastHost from './components/ui/ToastHost.vue'
 import { useDeviceDiscovery } from './composables/useDeviceDiscovery'
 import { usePhotoLibrary } from './composables/usePhotoLibrary'
+import { useSettingsStore } from './stores/settingsStore'
 
 const POLL_INTERVAL_MS = 15_000
 
 const { store: deviceStore, refresh } = useDeviceDiscovery()
 // The only place that enables auto-sync: it loads the library for the active device.
 usePhotoLibrary({ autoSync: true })
-
-const isDark = ref(true)
-
-// Dark is the default theme; the `dark` class on <html> drives Tailwind's `dark:` variant.
-watch(
-  isDark,
-  (value) => {
-    document.documentElement.classList.toggle('dark', value)
-  },
-  { immediate: true },
-)
-
-function toggleTheme(): void {
-  isDark.value = !isDark.value
-}
+// Applies the saved theme and language before the first paint of this tree.
+useSettingsStore()
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
@@ -52,7 +40,7 @@ onBeforeUnmount(() => {
   <div
     class="flex h-screen flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100"
   >
-    <TopBar :is-dark="isDark" @toggle-theme="toggleTheme" />
+    <TopBar />
 
     <main class="flex min-h-0 flex-1">
       <LeftSidebar />

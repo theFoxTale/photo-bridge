@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useComparisonStore } from '../../stores/comparisonStore'
 import { useDeviceStore } from '../../stores/deviceStore'
 import { usePhotoStore } from '../../stores/photoStore'
 import { useTransferStore } from '../../stores/transferStore'
 import type { CompareProgress } from '../../types/compare'
 import type { FolderStructure } from '../../types/transfer'
+import { translateError } from '../../utils/errors'
 
 type TransferFormat = 'original' | 'jpg' | 'both'
 
+const { t } = useI18n()
 const photoStore = usePhotoStore()
 const transferStore = useTransferStore()
 const comparisonStore = useComparisonStore()
@@ -23,17 +26,17 @@ const { options, destPath, isRunning, isCancelling, isChoosingFolder, error } =
 
 const selectedCount = computed(() => selectedIds.value.size)
 
-const formatOptions: readonly { value: TransferFormat; label: string }[] = [
-  { value: 'original', label: 'Original only' },
-  { value: 'jpg', label: 'JPG only' },
-  { value: 'both', label: 'Original + JPG' },
-]
+const formatOptions = computed((): readonly { value: TransferFormat; label: string }[] => [
+  { value: 'original', label: t('transfer.originalOnly') },
+  { value: 'jpg', label: t('transfer.jpgOnly') },
+  { value: 'both', label: t('transfer.originalJpg') },
+])
 
-const folderOptions: readonly { value: FolderStructure; label: string }[] = [
-  { value: 'flat', label: 'Flat (all in one folder)' },
-  { value: 'year_month', label: 'Year / Month (e.g., 2021/04)' },
-  { value: 'year_month_day', label: 'Year / Month / Day (e.g., 2021/04/15)' },
-]
+const folderOptions = computed((): readonly { value: FolderStructure; label: string }[] => [
+  { value: 'flat', label: t('transfer.flat') },
+  { value: 'year_month', label: t('transfer.yearMonth') },
+  { value: 'year_month_day', label: t('transfer.yearMonthDay') },
+])
 
 // The three radio buttons map onto the two booleans of the transfer options.
 const format = computed<TransferFormat>({
@@ -64,18 +67,18 @@ const canSyncNew = computed(
 )
 
 function compareStatusText(progress: CompareProgress | null): string {
-  if (!progress) return 'Comparing…'
+  if (!progress) return t('transfer.comparing')
   switch (progress.phase) {
     case 'scanning':
-      return `Scanning the folder… ${progress.scanned} found`
+      return t('transfer.scanning', { count: progress.scanned })
     case 'listing':
-      return 'Reading the iPhone photo list…'
+      return t('transfer.listing')
     case 'hashing':
       return progress.total > 0
-        ? `Verifying matches… ${progress.scanned} of ${progress.total}`
-        : 'Verifying matches…'
+        ? t('transfer.hashing', { scanned: progress.scanned, total: progress.total })
+        : t('transfer.hashingShort')
     default:
-      return 'Comparing…'
+      return t('transfer.comparing')
   }
 }
 
@@ -95,11 +98,11 @@ async function onTransfer(): Promise<void> {
 <template>
   <aside
     class="flex w-[280px] shrink-0 flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"
-    aria-label="Transfer"
+    :aria-label="$t('transfer.aria')"
   >
     <div class="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
       <h2 class="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-        Transfer
+        {{ $t('transfer.title') }}
       </h2>
     </div>
 
@@ -109,13 +112,13 @@ async function onTransfer(): Promise<void> {
           id="destination-label"
           class="mb-1.5 block text-xs font-medium text-zinc-700 dark:text-zinc-300"
         >
-          Destination folder
+          {{ $t('transfer.destination') }}
         </span>
         <button
           type="button"
           :disabled="isRunning || isChoosingFolder"
           aria-labelledby="destination-label"
-          :title="destPath === '' ? 'Choose the destination folder' : destPath"
+          :title="destPath === '' ? $t('transfer.chooseFolderTitle') : destPath"
           class="flex w-full items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 py-2 text-left text-sm text-zinc-900 transition-colors hover:bg-zinc-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
           @click="transferStore.chooseDestFolder()"
         >
@@ -135,7 +138,7 @@ async function onTransfer(): Promise<void> {
             class="min-w-0 flex-1 truncate"
             :class="destPath === '' ? 'text-zinc-400 dark:text-zinc-500' : ''"
           >
-            {{ isChoosingFolder ? 'Opening…' : destPath === '' ? 'Choose folder…' : destPath }}
+            {{ isChoosingFolder ? $t('transfer.opening') : destPath === '' ? $t('transfer.chooseFolder') : destPath }}
           </span>
         </button>
       </div>
@@ -143,10 +146,10 @@ async function onTransfer(): Promise<void> {
       <section
         v-if="showSyncStatus"
         class="space-y-2 rounded-md border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-950"
-        aria-label="Sync status"
+        :aria-label="$t('transfer.syncStatus')"
       >
         <h3 class="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-          Sync status
+          {{ $t('transfer.syncStatus') }}
         </h3>
 
         <p
@@ -160,31 +163,31 @@ async function onTransfer(): Promise<void> {
 
         <dl v-if="result" class="space-y-1 text-sm">
           <div class="flex items-center justify-between gap-3">
-            <dt class="text-zinc-600 dark:text-zinc-300">Total on device</dt>
+            <dt class="text-zinc-600 dark:text-zinc-300">{{ $t('transfer.totalOnDevice') }}</dt>
             <dd class="tabular-nums text-zinc-900 dark:text-zinc-100">{{ counts.totalOnDevice }}</dd>
           </div>
           <div class="flex items-center justify-between gap-3">
-            <dt class="text-emerald-700 dark:text-emerald-400">Already on PC</dt>
+            <dt class="text-emerald-700 dark:text-emerald-400">{{ $t('transfer.alreadyOnPc') }}</dt>
             <dd class="tabular-nums text-emerald-700 dark:text-emerald-400">{{ counts.existing }}</dd>
           </div>
           <div class="flex items-center justify-between gap-3">
-            <dt class="text-blue-700 dark:text-blue-400">New</dt>
+            <dt class="text-blue-700 dark:text-blue-400">{{ $t('transfer.new') }}</dt>
             <dd class="tabular-nums text-blue-700 dark:text-blue-400">{{ counts.new }}</dd>
           </div>
           <div v-if="counts.conflicts > 0" class="flex items-center justify-between gap-3">
-            <dt class="text-amber-700 dark:text-amber-400">Conflicts</dt>
+            <dt class="text-amber-700 dark:text-amber-400">{{ $t('transfer.conflicts') }}</dt>
             <dd class="tabular-nums text-amber-700 dark:text-amber-400">{{ counts.conflicts }}</dd>
           </div>
         </dl>
 
-        <p v-if="compareError" class="text-xs text-red-500" role="alert">{{ compareError }}</p>
+        <p v-if="compareError" class="text-xs text-red-500" role="alert">{{ translateError(compareError) }}</p>
         <button
           v-if="compareError && !isComparing"
           type="button"
           class="text-xs font-medium text-blue-600 underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-400"
           @click="transferStore.runBackgroundCompare()"
         >
-          Try again
+          {{ $t('transfer.tryAgain') }}
         </button>
 
         <button
@@ -194,15 +197,15 @@ async function onTransfer(): Promise<void> {
           class="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500"
           @click="syncNewPhotos()"
         >
-          Sync New Photos ({{ counts.new }})
+          {{ $t('transfer.syncNew') }} ({{ counts.new }})
         </button>
         <p v-if="result && counts.conflicts > 0" class="text-[11px] text-zinc-500 dark:text-zinc-400">
-          Conflicts are left as they are. Select them in the grid and use Transfer Selected.
+          {{ $t('transfer.conflictsHint') }}
         </p>
       </section>
 
       <fieldset :disabled="isRunning">
-        <legend class="mb-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">Format</legend>
+        <legend class="mb-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">{{ $t('transfer.format') }}</legend>
         <div class="space-y-1">
           <label
             v-for="option in formatOptions"
@@ -224,7 +227,7 @@ async function onTransfer(): Promise<void> {
 
       <fieldset :disabled="isRunning">
         <legend class="mb-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">
-          Folder structure
+          {{ $t('transfer.folderStructure') }}
         </legend>
         <div class="space-y-1">
           <label
@@ -248,7 +251,7 @@ async function onTransfer(): Promise<void> {
       <div :class="qualityEnabled ? '' : 'opacity-50'">
         <div class="mb-1.5 flex items-center justify-between">
           <label for="quality" class="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-            JPG quality
+            {{ $t('transfer.jpgQuality') }}
           </label>
           <span class="text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
             {{ options.jpgQuality }}
@@ -272,9 +275,9 @@ async function onTransfer(): Promise<void> {
 
       <div class="mt-auto space-y-2">
         <p class="text-center text-xs text-zinc-500 dark:text-zinc-400" aria-live="polite">
-          {{ selectedCount === 0 ? 'No files selected' : `${selectedCount} selected` }}
+          {{ selectedCount === 0 ? $t('transfer.noneSelected') : $t('transfer.selectedCount', { count: selectedCount }) }}
         </p>
-        <p v-if="error" class="text-xs text-red-500" role="alert">{{ error }}</p>
+        <p v-if="error" class="text-xs text-red-500" role="alert">{{ translateError(error) }}</p>
         <button
           type="submit"
           :disabled="!canTransfer"
@@ -282,8 +285,10 @@ async function onTransfer(): Promise<void> {
         >
           {{
             isRunning
-              ? 'Transferring…'
-              : `Transfer Selected${selectedCount > 0 ? ` (${selectedCount})` : ''}`
+              ? $t('transfer.transferring')
+              : selectedCount > 0
+                ? `${$t('transfer.transferSelected')} (${selectedCount})`
+                : $t('transfer.transferSelected')
           }}
         </button>
         <button
@@ -293,7 +298,7 @@ async function onTransfer(): Promise<void> {
           class="w-full rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
           @click="transferStore.cancelTransfer()"
         >
-          {{ isCancelling ? 'Cancelling…' : 'Cancel' }}
+          {{ isCancelling ? $t('transfer.cancelling') : $t('transfer.cancel') }}
         </button>
       </div>
     </form>
