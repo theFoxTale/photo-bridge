@@ -7,7 +7,7 @@ import type { TransferOptions, TransferResult } from './transfer'
 /**
  * Methods the Go `App` struct exposes to the frontend. Only methods that
  * actually exist in app_discovery.go, app_photos.go, app_transfer.go,
- * app_compare.go and app_settings.go are declared here. `go` is optional
+ * app_compare.go, app_settings.go and app_storage.go are declared here. `go` is optional
  * because it is undefined when the page runs outside the Wails shell (for
  * example plain `vite` in a browser).
  *
@@ -41,6 +41,10 @@ declare global {
           /** Resolves to an empty string when the user cancels the dialog. */
           SelectCacheFolder(): Promise<string>
           SetCacheFolder(path: string): Promise<void>
+          GetStorageInfo(
+            deviceId: string,
+            destPath: string,
+          ): Promise<{ pcFree: number; iPhoneFree: number; iPhoneTotal: number }>
         }
       }
     }

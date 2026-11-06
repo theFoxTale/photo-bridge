@@ -193,6 +193,22 @@ export namespace backend {
 	}
 	
 	
+	export class StorageInfo {
+	    pcFree: number;
+	    iPhoneFree: number;
+	    iPhoneTotal: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new StorageInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pcFree = source["pcFree"];
+	        this.iPhoneFree = source["iPhoneFree"];
+	        this.iPhoneTotal = source["iPhoneTotal"];
+	    }
+	}
 	export class TransferError {
 	    photoId: string;
 	    reason: string;

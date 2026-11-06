@@ -42,6 +42,10 @@ export function GetCacheStats() {
   return window['go']['main']['App']['GetCacheStats']();
 }
 
+export function GetStorageInfo(arg1, arg2) {
+  return window['go']['main']['App']['GetStorageInfo'](arg1, arg2);
+}
+
 export function LibraryMode() {
   return window['go']['main']['App']['LibraryMode']();
 }

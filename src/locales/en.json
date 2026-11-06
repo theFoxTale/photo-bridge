@@ -157,6 +157,10 @@
     "cancel": "Cancel",
     "cancelling": "Cancelling…"
   },
+  "bottom": {
+    "pcFree": "PC: {size} free",
+    "iphoneFree": "iPhone: {size} free"
+  },
   "progress": {
     "idle": "Idle",
     "aria": "Transfer progress",

@@ -157,6 +157,10 @@
     "cancel": "Отмена",
     "cancelling": "Отмена…"
   },
+  "bottom": {
+    "pcFree": "ПК: {size} свободно",
+    "iphoneFree": "iPhone: {size} свободно"
+  },
   "progress": {
     "idle": "Ожидание",
     "aria": "Прогресс переноса",
