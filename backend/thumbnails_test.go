@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image"
@@ -52,7 +53,7 @@ func TestCachedThumbnailPNGRoundTrip(t *testing.T) {
 		t.Fatalf("temp original %q still present: %v", srcPath, err)
 	}
 
-	cacheFile := filepath.Join(root, "PhotoBridge", "thumbnails", "device-1", "100APPLE_IMG_0001.PNG.jpg")
+	cacheFile := filepath.Join(root, "PhotoBridge", "thumbnails", "device-1", "100APPLE_IMG_0001.PNG"+thumbnailCacheSuffix)
 	if _, err := os.Stat(cacheFile); err != nil {
 		t.Fatalf("cache file: %v", err)
 	}
@@ -263,7 +264,7 @@ func TestCachedThumbnailVideoFrame(t *testing.T) {
 	if _, err := os.Stat(srcPath); !os.IsNotExist(err) {
 		t.Fatalf("temp original %q still present: %v", srcPath, err)
 	}
-	cacheFile := filepath.Join(root, "PhotoBridge", "thumbnails", "device-1", "100APPLE_CLIP.MP4.jpg")
+	cacheFile := filepath.Join(root, "PhotoBridge", "thumbnails", "device-1", "100APPLE_CLIP.MP4"+thumbnailCacheSuffix)
 	if _, err := os.Stat(cacheFile); err != nil {
 		t.Fatalf("cache file: %v", err)
 	}
@@ -400,7 +401,7 @@ func TestCachedThumbnailDNG(t *testing.T) {
 	if _, err := os.Stat(srcPath); !os.IsNotExist(err) {
 		t.Fatalf("temp original %q still present: %v", srcPath, err)
 	}
-	cacheFile := filepath.Join(root, "PhotoBridge", "thumbnails", "device-1", "100APPLE_IMG_0001.DNG.jpg")
+	cacheFile := filepath.Join(root, "PhotoBridge", "thumbnails", "device-1", "100APPLE_IMG_0001.DNG"+thumbnailCacheSuffix)
 	if _, err := os.Stat(cacheFile); err != nil {
 		t.Fatalf("cache file: %v", err)
 	}
@@ -444,6 +445,152 @@ func TestFFmpegJPEGQuality(t *testing.T) {
 	if _, err := ffmpegJPEGQuality(101); err == nil {
 		t.Fatal("quality 101 was accepted")
 	}
+}
+
+func TestApplyExifOrientation(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 3, 2))
+	set := func(x, y int, c color.RGBA) { src.SetRGBA(x, y, c) }
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	blue := color.RGBA{B: 255, A: 255}
+	white := color.RGBA{R: 255, G: 255, B: 255, A: 255}
+	black := color.RGBA{A: 255}
+	yellow := color.RGBA{R: 255, G: 255, A: 255}
+	set(0, 0, red)
+	set(1, 0, green)
+	set(2, 0, blue)
+	set(0, 1, white)
+	set(1, 1, black)
+	set(2, 1, yellow)
+
+	cases := []struct {
+		orientation int
+		w, h        int
+		want        []color.RGBA
+	}{
+		{orientation: 1, w: 3, h: 2, want: []color.RGBA{red, green, blue, white, black, yellow}},
+		{orientation: 2, w: 3, h: 2, want: []color.RGBA{blue, green, red, yellow, black, white}},
+		{orientation: 3, w: 3, h: 2, want: []color.RGBA{yellow, black, white, blue, green, red}},
+		{orientation: 4, w: 3, h: 2, want: []color.RGBA{white, black, yellow, red, green, blue}},
+		{orientation: 5, w: 2, h: 3, want: []color.RGBA{red, white, green, black, blue, yellow}},
+		{orientation: 6, w: 2, h: 3, want: []color.RGBA{white, red, black, green, yellow, blue}},
+		{orientation: 7, w: 2, h: 3, want: []color.RGBA{yellow, blue, black, green, white, red}},
+		{orientation: 8, w: 2, h: 3, want: []color.RGBA{blue, yellow, green, black, red, white}},
+	}
+	for _, tc := range cases {
+		t.Run(strconv.Itoa(tc.orientation), func(t *testing.T) {
+			got := applyExifOrientation(src, tc.orientation)
+			b := got.Bounds()
+			if b.Dx() != tc.w || b.Dy() != tc.h {
+				t.Fatalf("size = %d x %d, want %d x %d", b.Dx(), b.Dy(), tc.w, tc.h)
+			}
+			i := 0
+			for y := 0; y < tc.h; y++ {
+				for x := 0; x < tc.w; x++ {
+					if got.At(x, y) != tc.want[i] {
+						t.Fatalf("pixel (%d,%d) = %v, want %v", x, y, got.At(x, y), tc.want[i])
+					}
+					i++
+				}
+			}
+		})
+	}
+}
+
+func TestCachedThumbnailRotatesExifOrientation(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("APPDATA", root)
+
+	payload := orientedJPEG(t, 64, 32, 6, func(img *image.RGBA) {
+		for y := 0; y < 32; y++ {
+			for x := 0; x < 64; x++ {
+				if x < 32 {
+					img.SetRGBA(x, y, color.RGBA{R: 255, A: 255})
+				} else {
+					img.SetRGBA(x, y, color.RGBA{B: 255, A: 255})
+				}
+			}
+		}
+	})
+	download := func(_ context.Context, dest string) error {
+		return os.WriteFile(dest, payload, 0o644)
+	}
+	url, err := cachedThumbnail(context.Background(), "device-1", "100APPLE/IMG_0001.JPG", download)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := decodeJPEGDataURL(t, url)
+	if got := img.Bounds().Size(); got.X != 32 || got.Y != 64 {
+		t.Fatalf("size = %v, want 32x64", got)
+	}
+	if !colorClose(img.At(16, 8), color.RGBA{R: 255, A: 255}) {
+		t.Fatalf("top = %v, want red", img.At(16, 8))
+	}
+	if !colorClose(img.At(16, 56), color.RGBA{B: 255, A: 255}) {
+		t.Fatalf("bottom = %v, want blue", img.At(16, 56))
+	}
+
+	cacheFile := filepath.Join(root, "PhotoBridge", "thumbnails", "device-1", "100APPLE_IMG_0001.JPG"+thumbnailCacheSuffix)
+	cached, err := os.ReadFile(cacheFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := jpegExif(cached)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if block != nil {
+		t.Fatal("thumbnail JPEG still carries an EXIF orientation tag")
+	}
+}
+
+func TestCachedThumbnailKeepsNormalOrientation(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	payload := orientedJPEG(t, 80, 40, 1, nil)
+	download := func(_ context.Context, dest string) error {
+		return os.WriteFile(dest, payload, 0o644)
+	}
+	url, err := cachedThumbnail(context.Background(), "device-1", "IMG_FLAT.JPG", download)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := decodeJPEGDataURL(t, url)
+	if got := img.Bounds().Size(); got.X != 80 || got.Y != 40 {
+		t.Fatalf("size = %v, want 80x40", got)
+	}
+}
+
+func orientedJPEG(t *testing.T, w, h int, orientation uint16, paint func(*image.RGBA)) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	if paint != nil {
+		paint(img)
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 95}); err != nil {
+		t.Fatal(err)
+	}
+	raw := testExif()
+	binary.LittleEndian.PutUint16(raw[18:], orientation)
+	out, err := insertExif(buf.Bytes(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func colorClose(got color.Color, want color.RGBA) bool {
+	r, g, b, _ := got.RGBA()
+	return absInt(int(r>>8)-int(want.R)) < 40 &&
+		absInt(int(g>>8)-int(want.G)) < 40 &&
+		absInt(int(b>>8)-int(want.B)) < 40
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 func writeTestVideo(t *testing.T, path, color string, w, h int, seconds float64) {

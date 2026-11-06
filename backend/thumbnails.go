@@ -24,6 +24,11 @@ const (
 	thumbnailMaxEdge     = 400
 	thumbnailJPEGQuality = 85
 
+	// thumbnailCacheSuffix versions the cached JPEG. v2 is the first
+	// generation whose pixels are already upright, so a WebView does not
+	// have to honour EXIF. Older files are named .jpg and are left unused.
+	thumbnailCacheSuffix = ".v2.jpg"
+
 	ffmpegMissingWarning = "FFmpeg not found. Video thumbnails will be unavailable."
 )
 
@@ -87,7 +92,7 @@ func isReservedWindowsName(name string) bool {
 	}
 }
 
-// thumbnailPath is cacheDir/sanitizedDevice/sanitizedPhoto.jpg, and it is
+// thumbnailPath is cacheDir/sanitizedDevice/sanitizedPhoto.v2.jpg, and it is
 // rejected when it would leave the cache directory.
 func thumbnailPath(deviceID, photoID string) (string, error) {
 	root, err := thumbnailCacheDir()
@@ -103,7 +108,7 @@ func thumbnailPath(deviceID, photoID string) (string, error) {
 		return "", fmt.Errorf("photoID: %w", err)
 	}
 
-	full := filepath.Join(root, deviceSeg, photoSeg+".jpg")
+	full := filepath.Join(root, deviceSeg, photoSeg+thumbnailCacheSuffix)
 	rel, err := filepath.Rel(root, full)
 	if err != nil || !filepath.IsLocal(rel) {
 		return "", errors.New("thumbnail path escapes cache directory")
@@ -201,18 +206,20 @@ func generateThumbnail(ctx context.Context, cachePath, format string, download f
 	}
 
 	var img image.Image
+	var orientation int
 	switch {
 	case isVideoFormat(format):
 		img, err = decodeVideoPoster(ctx, srcPath)
+		orientation = 1
 	case format == "dng":
-		img, err = decodeDNGPreview(ctx, srcPath)
+		img, orientation, err = decodeDNGPreview(ctx, srcPath)
 	default:
-		img, err = decodeThumbnailSource(srcPath, format)
+		img, orientation, err = decodeThumbnailSource(srcPath, format)
 	}
 	if err != nil {
 		return "", err
 	}
-	data, err := encodeThumbnailJPEG(fitThumbnail(img))
+	data, err := encodeThumbnailJPEG(fitUpright(img, orientation, false))
 	if err != nil {
 		return "", err
 	}
@@ -299,27 +306,28 @@ func extractVideoFrame(ctx context.Context, ffmpegPath, srcPath, dstPath, timest
 }
 
 // decodeDNGPreview extracts one JPEG from a DNG with ffmpeg and decodes that
-// JPEG. The DNG itself is never passed to an image decoder.
-func decodeDNGPreview(ctx context.Context, srcPath string) (image.Image, error) {
+// JPEG. The DNG itself is never passed to an image decoder. The returned
+// orientation is applied by fitUpright after the bitmap has been scaled.
+func decodeDNGPreview(ctx context.Context, srcPath string) (image.Image, int, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, 1, err
 	}
 	ffmpeg, err := exec.LookPath("ffmpeg")
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
 			logFFmpegMissing()
 		}
-		return nil, fmt.Errorf("ffmpeg not available: %w", err)
+		return nil, 1, fmt.Errorf("ffmpeg not available: %w", err)
 	}
 
 	poster, err := os.CreateTemp("", "photobridge-dng-*.jpg")
 	if err != nil {
-		return nil, fmt.Errorf("create temporary frame: %w", err)
+		return nil, 1, fmt.Errorf("create temporary frame: %w", err)
 	}
 	posterPath := poster.Name()
 	if err := poster.Close(); err != nil {
 		_ = os.Remove(posterPath)
-		return nil, fmt.Errorf("create temporary frame: %w", err)
+		return nil, 1, fmt.Errorf("create temporary frame: %w", err)
 	}
 	defer func() { _ = os.Remove(posterPath) }()
 
@@ -330,12 +338,14 @@ func decodeDNGPreview(ctx context.Context, srcPath string) (image.Image, error) 
 		"-f", "image2",
 		posterPath,
 	); err != nil {
-		return nil, fmt.Errorf("extract DNG preview: %w", err)
+		return nil, 1, fmt.Errorf("extract DNG preview: %w", err)
 	}
 	if !jpegFileReady(posterPath) {
-		return nil, errors.New("extract DNG preview: ffmpeg wrote no JPEG")
+		return nil, 1, errors.New("extract DNG preview: ffmpeg wrote no JPEG")
 	}
-	return decodeJPEGFile(posterPath)
+	// ffmpeg's autorotate writes an upright JPEG and drops the orientation
+	// tag. A tag that is still present describes pixels that were not turned.
+	return decodeOrientedJPEGFile(posterPath)
 }
 
 // runFFmpeg runs ffmpeg with args. A missing binary is exec.ErrNotFound and
@@ -395,37 +405,29 @@ func decodeJPEGFile(path string) (image.Image, error) {
 	return img, nil
 }
 
-func decodeThumbnailSource(path, format string) (image.Image, error) {
-	f, err := os.Open(path)
+// decodeOrientedJPEGFile decodes a JPEG and reports its EXIF orientation.
+// Video posters stay on decodeJPEGFile, which does not read EXIF. The pixels
+// are left as stored so the caller can scale them before turning them.
+func decodeOrientedJPEGFile(path string) (image.Image, int, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("open downloaded file: %w", err)
+		return nil, 1, fmt.Errorf("open extracted frame: %w", err)
 	}
-	defer f.Close()
+	img, err := jpeg.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, 1, fmt.Errorf("decode extracted frame: %w", err)
+	}
+	if img == nil {
+		return nil, 1, errors.New("extracted frame is empty")
+	}
+	b := img.Bounds()
+	if b.Dx() <= 0 || b.Dy() <= 0 {
+		return nil, 1, errors.New("extracted frame has no pixels")
+	}
+	return img, jpegOrientation(data), nil
+}
 
-	var img image.Image
-	switch format {
-	case "jpeg":
-		img, err = jpeg.Decode(f)
-		if err != nil {
-			return nil, fmt.Errorf("decode JPEG: %w", err)
-		}
-	case "png":
-		img, err = png.Decode(f)
-		if err != nil {
-			return nil, fmt.Errorf("decode PNG: %w", err)
-		}
-	case "heic":
-		decoded, decErr := decodeHEIC(f)
-		if decErr != nil {
-			return nil, decErr
-		}
-		img = decoded.img
-		if turns := decoded.rotations % 4; turns != 0 {
-			img = rotateCounterClockwise(img, turns)
-		}
-	default:
-		return nil, fmt.Errorf("preview not available for %s files", format)
-	}
+func validImage(img image.Image) (image.Image, error) {
 	if img == nil {
 		return nil, errors.New("decoded image is empty")
 	}
@@ -434,6 +436,106 @@ func decodeThumbnailSource(path, format string) (image.Image, error) {
 		return nil, errors.New("decoded image has no pixels")
 	}
 	return img, nil
+}
+
+func decodeThumbnailSource(path, format string) (image.Image, int, error) {
+	switch format {
+	case "jpeg", "png":
+		return decodeOrientedStill(path, format)
+	case "heic":
+		return decodeOrientedHEIC(path)
+	default:
+		return nil, 1, fmt.Errorf("preview not available for %s files", format)
+	}
+}
+
+// decodeOrientedStill decodes a JPEG or PNG and reports its EXIF orientation.
+// Pixels stay in stored order. The JPEG written afterwards has no EXIF
+// segment, so the tag cannot turn the picture a second time.
+func decodeOrientedStill(path, format string) (image.Image, int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, 1, fmt.Errorf("open downloaded file: %w", err)
+	}
+	var img image.Image
+	var orientation int
+	switch format {
+	case "jpeg":
+		img, err = jpeg.Decode(bytes.NewReader(data))
+		if err != nil {
+			return nil, 1, fmt.Errorf("decode JPEG: %w", err)
+		}
+		orientation = jpegOrientation(data)
+	case "png":
+		img, err = png.Decode(bytes.NewReader(data))
+		if err != nil {
+			return nil, 1, fmt.Errorf("decode PNG: %w", err)
+		}
+		orientation = pngOrientation(data)
+	default:
+		return nil, 1, fmt.Errorf("preview not available for %s files", format)
+	}
+	img, err = validImage(img)
+	if err != nil {
+		return nil, 1, err
+	}
+	return img, orientation, nil
+}
+
+// decodeOrientedHEIC reports the HEIF irot value as an EXIF orientation.
+// EXIF is used only when irot is 0, because a file that stores both describes
+// one turn, not two. The pixels are not turned here.
+func decodeOrientedHEIC(path string) (image.Image, int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, 1, fmt.Errorf("open downloaded file: %w", err)
+	}
+	defer f.Close()
+
+	decoded, err := decodeHEIC(f)
+	if err != nil {
+		return nil, 1, err
+	}
+	img, err := validImage(decoded.img)
+	if err != nil {
+		return nil, 1, err
+	}
+	if turns := decoded.rotations % 4; turns != 0 {
+		return img, orientationFromIrot(turns), nil
+	}
+	return img, exifBlockOrientation(decoded.exif), nil
+}
+
+// fitUpright scales src so the visual picture fits the thumbnail or the
+// lightbox box, then applies orientation. The turn happens after the scale,
+// so a 12 megapixel photo is not rotated pixel by pixel.
+func fitUpright(src image.Image, orientation int, preview bool) image.Image {
+	b := src.Bounds()
+	sw, sh := b.Dx(), b.Dy()
+	vw, vh := visualSize(sw, sh, orientation)
+	if vw <= 0 || vh <= 0 {
+		return src
+	}
+	var fw, fh int
+	if preview {
+		fw, fh = fitPreviewBox(vw, vh)
+	} else {
+		fw, fh = fittedSize(vw, vh, thumbnailMaxEdge)
+	}
+	if fw <= 0 || fh <= 0 {
+		return applyExifOrientation(src, orientation)
+	}
+	pw, ph := fw, fh
+	if orientation >= 5 && orientation <= 8 {
+		pw, ph = fh, fw
+	}
+	scaled := src
+	if pw != sw || ph != sh {
+		dst := image.NewRGBA(image.Rect(0, 0, pw, ph))
+		xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, b, xdraw.Over, nil)
+		scaled = dst
+	}
+	return applyExifOrientation(scaled, orientation)
 }
 
 // fitThumbnail scales src so both sides are at most thumbnailMaxEdge pixels.

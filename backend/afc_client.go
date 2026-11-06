@@ -528,8 +528,9 @@ func albumDir(albumID string) (string, error) {
 	return dcimRoot + "/" + roll, nil
 }
 
-// FetchPhotos lists the media files of an album, newest first. Dimensions
-// are not available over AFC and are reported as 0 (unknown).
+// FetchPhotos lists the media files of an album, newest first. Width and
+// Height stay 0: opening every file to read its header blocks the gallery
+// on the device connection. The displayed JPEG is turned upright later.
 func (l *AFCPhotoLibrary) FetchPhotos(deviceID, albumID string) ([]Photo, error) {
 	if err := validateDeviceID(deviceID); err != nil {
 		return []Photo{}, err
@@ -562,7 +563,7 @@ func (l *AFCPhotoLibrary) FetchPhotos(deviceID, albumID string) ([]Photo, error)
 			if st.isDir {
 				continue
 			}
-			built = append(built, buildPhoto(albumID, p, st))
+			built = append(built, buildPhoto(albumID, p, st, 0, 0, 1))
 		}
 		built = mergeLivePhotos(built)
 
@@ -581,7 +582,7 @@ func (l *AFCPhotoLibrary) FetchPhotos(deviceID, albumID string) ([]Photo, error)
 	return photos, nil
 }
 
-func buildPhoto(albumID, absPath string, st fileStat) Photo {
+func buildPhoto(albumID, absPath string, st fileStat, width, height, orientation int) Photo {
 	name := path.Base(absPath)
 	format, _ := formatOf(name)
 
@@ -593,6 +594,7 @@ func buildPhoto(albumID, absPath string, st fileStat) Photo {
 	if !taken.IsZero() {
 		date = taken.UTC().Format(time.RFC3339)
 	}
+	width, height = visualSize(width, height, orientation)
 
 	return Photo{
 		ID:       strings.TrimPrefix(absPath, dcimRoot+"/"),
@@ -601,8 +603,8 @@ func buildPhoto(albumID, absPath string, st fileStat) Photo {
 		Size:     st.size,
 		Format:   format,
 		IsVideo:  isVideoFormat(format),
-		Width:    0,
-		Height:   0,
+		Width:    width,
+		Height:   height,
 		AlbumID:  albumID,
 		ThumbURL: "",
 	}
@@ -627,7 +629,7 @@ func dateFromFilename(name string) time.Time {
 func albumsFromMediaPaths(paths []string) []Album {
 	photos := make([]Photo, 0, len(paths))
 	for _, p := range paths {
-		photos = append(photos, buildPhoto(cameraRollID, p, fileStat{}))
+		photos = append(photos, buildPhoto(cameraRollID, p, fileStat{}, 0, 0, 1))
 	}
 	photos = mergeLivePhotos(photos)
 
@@ -767,7 +769,7 @@ func (s *afcSession) attachLiveVideo(photo Photo, absPath string) (Photo, error)
 			included = true
 			continue
 		}
-		group = append(group, buildPhoto(photo.AlbumID, full, fileStat{}))
+		group = append(group, buildPhoto(photo.AlbumID, full, fileStat{}, 0, 0, 1))
 	}
 	if !included {
 		group = append(group, photo)
@@ -868,7 +870,7 @@ func (l *AFCPhotoLibrary) DescribePhoto(deviceID, photoID string) (Photo, error)
 		if st.isDir {
 			return permanentf("%q is not a file", photoID)
 		}
-		photo = buildPhoto("", absPath, st)
+		photo = buildPhoto("", absPath, st, 0, 0, 1)
 		photo, err = s.attachLiveVideo(photo, absPath)
 		return err
 	})

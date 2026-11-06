@@ -225,11 +225,11 @@ func TestThumbnailUsesConfiguredCacheDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cacheFile := filepath.Join(custom, "device-1", "IMG_0001.PNG.jpg")
+	cacheFile := filepath.Join(custom, "device-1", "IMG_0001.PNG"+thumbnailCacheSuffix)
 	if _, err := os.Stat(cacheFile); err != nil {
 		t.Fatalf("configured cache file: %v", err)
 	}
-	defaultFile := filepath.Join(root, "PhotoBridge", "thumbnails", "device-1", "IMG_0001.PNG.jpg")
+	defaultFile := filepath.Join(root, "PhotoBridge", "thumbnails", "device-1", "IMG_0001.PNG"+thumbnailCacheSuffix)
 	if _, err := os.Stat(defaultFile); !os.IsNotExist(err) {
 		t.Fatalf("thumbnail written to the default cache: %v", err)
 	}

@@ -8,8 +8,6 @@ import (
 	"image"
 	"image/jpeg"
 	"os"
-
-	xdraw "golang.org/x/image/draw"
 )
 
 const (
@@ -87,38 +85,22 @@ func generatePreview(ctx context.Context, format string, download func(ctx conte
 	}
 
 	var img image.Image
+	var orientation int
 	switch format {
 	case "dng":
-		img, err = decodeDNGPreview(ctx, srcPath)
+		img, orientation, err = decodeDNGPreview(ctx, srcPath)
 	default:
-		img, err = decodeThumbnailSource(srcPath, format)
+		img, orientation, err = decodeThumbnailSource(srcPath, format)
 	}
 	if err != nil {
 		return "", err
 	}
 
-	data, err := encodePreviewJPEG(fitPreview(img))
+	data, err := encodePreviewJPEG(fitUpright(img, orientation, true))
 	if err != nil {
 		return "", err
 	}
 	return jpegDataURL(data), nil
-}
-
-// fitPreview scales src so it fits inside 1920x1080. The aspect ratio is kept
-// and a picture that is already smaller is returned unchanged.
-func fitPreview(src image.Image) image.Image {
-	b := src.Bounds()
-	w, h := b.Dx(), b.Dy()
-	dw, dh := fitPreviewBox(w, h)
-	if dw == w && dh == h {
-		return src
-	}
-	if dw <= 0 || dh <= 0 {
-		return src
-	}
-	dst := image.NewRGBA(image.Rect(0, 0, dw, dh))
-	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, b, xdraw.Over, nil)
-	return dst
 }
 
 // fitPreviewBox is the largest size that fits inside 1920x1080.

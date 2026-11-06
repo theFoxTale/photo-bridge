@@ -1,6 +1,8 @@
 package backend
 
 import (
+	"bytes"
+	"encoding/binary"
 	"testing"
 	"time"
 )
@@ -100,19 +102,19 @@ func TestFormatOf(t *testing.T) {
 
 func TestBuildPhotoMarksVideo(t *testing.T) {
 	taken := time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)
-	mov := buildPhoto(cameraRollID, "/DCIM/100APPLE/IMG_0001.MOV", fileStat{size: 12, mtime: taken})
+	mov := buildPhoto(cameraRollID, "/DCIM/100APPLE/IMG_0001.MOV", fileStat{size: 12, mtime: taken}, 0, 0, 1)
 	if !mov.IsVideo || mov.Format != "mov" || mov.Filename != "IMG_0001.MOV" {
 		t.Fatalf("mov = %+v", mov)
 	}
-	mp4 := buildPhoto(cameraRollID, "/DCIM/100APPLE/CLIP.MP4", fileStat{size: 12, mtime: taken})
+	mp4 := buildPhoto(cameraRollID, "/DCIM/100APPLE/CLIP.MP4", fileStat{size: 12, mtime: taken}, 0, 0, 1)
 	if !mp4.IsVideo || mp4.Format != "mp4" {
 		t.Fatalf("mp4 = %+v", mp4)
 	}
-	jpg := buildPhoto(cameraRollID, "/DCIM/100APPLE/IMG_0001.JPG", fileStat{size: 12, mtime: taken})
+	jpg := buildPhoto(cameraRollID, "/DCIM/100APPLE/IMG_0001.JPG", fileStat{size: 12, mtime: taken}, 0, 0, 1)
 	if jpg.IsVideo || jpg.Format != "jpeg" {
 		t.Fatalf("jpg = %+v", jpg)
 	}
-	dng := buildPhoto(cameraRollID, "/DCIM/100APPLE/IMG_0001.DNG", fileStat{size: 12, mtime: taken})
+	dng := buildPhoto(cameraRollID, "/DCIM/100APPLE/IMG_0001.DNG", fileStat{size: 12, mtime: taken}, 0, 0, 1)
 	if dng.IsVideo || dng.Format != "dng" || dng.Filename != "IMG_0001.DNG" {
 		t.Fatalf("dng = %+v", dng)
 	}
@@ -217,4 +219,242 @@ func TestAlbumsFromMediaPathsOmitsPairedLiveVideo(t *testing.T) {
 	if albums[2].ID != "roll-101APPLE" || albums[2].Count != 1 {
 		t.Errorf("folder 101 = %+v, want the unpaired mov", albums[2])
 	}
+}
+
+func TestVisualSize(t *testing.T) {
+	cases := []struct {
+		name         string
+		w, h, orient int
+		dw, dh       int
+	}{
+		{name: "normal", w: 4032, h: 3024, orient: 1, dw: 4032, dh: 3024},
+		{name: "mirror", w: 4032, h: 3024, orient: 2, dw: 4032, dh: 3024},
+		{name: "portrait clockwise", w: 4032, h: 3024, orient: 6, dw: 3024, dh: 4032},
+		{name: "portrait counter clockwise", w: 4032, h: 3024, orient: 8, dw: 3024, dh: 4032},
+		{name: "transpose", w: 4032, h: 3024, orient: 5, dw: 3024, dh: 4032},
+		{name: "unknown", w: 4032, h: 3024, orient: 0, dw: 4032, dh: 3024},
+		{name: "missing", w: 0, h: 3024, orient: 6, dw: 0, dh: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dw, dh := visualSize(tc.w, tc.h, tc.orient)
+			if dw != tc.dw || dh != tc.dh {
+				t.Fatalf("visualSize(%d, %d, %d) = %d x %d, want %d x %d", tc.w, tc.h, tc.orient, dw, dh, tc.dw, tc.dh)
+			}
+		})
+	}
+}
+
+func TestBuildPhotoUsesVisualDimensions(t *testing.T) {
+	portrait := buildPhoto(cameraRollID, "/DCIM/100APPLE/IMG_0001.JPG", fileStat{size: 10}, 4032, 3024, 6)
+	if portrait.Width != 3024 || portrait.Height != 4032 {
+		t.Fatalf("portrait = %d x %d, want 3024 x 4032", portrait.Width, portrait.Height)
+	}
+	landscape := buildPhoto(cameraRollID, "/DCIM/100APPLE/IMG_0002.JPG", fileStat{size: 10}, 4032, 3024, 1)
+	if landscape.Width != 4032 || landscape.Height != 3024 {
+		t.Fatalf("landscape = %d x %d, want 4032 x 3024", landscape.Width, landscape.Height)
+	}
+	unknown := buildPhoto(cameraRollID, "/DCIM/100APPLE/IMG_0003.JPG", fileStat{size: 10}, 0, 0, 6)
+	if unknown.Width != 0 || unknown.Height != 0 {
+		t.Fatalf("unknown size = %d x %d, want 0 x 0", unknown.Width, unknown.Height)
+	}
+}
+
+func TestImageHeaderSize(t *testing.T) {
+	t.Run("jpeg", func(t *testing.T) {
+		raw := orientedJPEG(t, 64, 32, 6, nil)
+		w, h, o, ok := imageHeaderSize("jpeg", raw)
+		if !ok || w != 64 || h != 32 || o != 6 {
+			t.Fatalf("jpeg header = %d x %d orient %d ok %v", w, h, o, ok)
+		}
+	})
+
+	t.Run("png", func(t *testing.T) {
+		raw := pngWithOrientation(t, 40, 10, 8)
+		w, h, o, ok := imageHeaderSize("png", raw)
+		if !ok || w != 40 || h != 10 || o != 8 {
+			t.Fatalf("png header = %d x %d orient %d ok %v", w, h, o, ok)
+		}
+	})
+
+	t.Run("dng", func(t *testing.T) {
+		raw := tiffHeader(binary.LittleEndian, 4032, 3024, 6)
+		w, h, o, ok := imageHeaderSize("dng", raw)
+		if !ok || w != 4032 || h != 3024 || o != 6 {
+			t.Fatalf("dng header = %d x %d orient %d ok %v", w, h, o, ok)
+		}
+	})
+
+	t.Run("dng big endian", func(t *testing.T) {
+		raw := tiffHeader(binary.BigEndian, 4032, 3024, 8)
+		w, h, o, ok := imageHeaderSize("dng", raw)
+		if !ok || w != 4032 || h != 3024 || o != 8 {
+			t.Fatalf("dng header = %d x %d orient %d ok %v", w, h, o, ok)
+		}
+	})
+
+	t.Run("dng subifd", func(t *testing.T) {
+		raw := tiffSubIFD(100, 80, 6)
+		w, h, o, ok := imageHeaderSize("dng", raw)
+		if !ok || w != 100 || h != 80 || o != 6 {
+			t.Fatalf("subifd = %d x %d orient %d ok %v", w, h, o, ok)
+		}
+	})
+
+	t.Run("heic primary association", func(t *testing.T) {
+		raw := testHEIC(heicProps{
+			primaryW: 320, primaryH: 240, primaryRot: 1,
+			otherW: 4032, otherH: 3024,
+		})
+		w, h, o, ok := imageHeaderSize("heic", raw)
+		if !ok || w != 320 || h != 240 || o != 8 {
+			t.Fatalf("heic = %d x %d orient %d ok %v, want the primary item turned by irot", w, h, o, ok)
+		}
+	})
+
+	t.Run("heic exif when irot is zero", func(t *testing.T) {
+		raw := testHEIC(heicProps{primaryW: 4032, primaryH: 3024, exifOrient: 6})
+		w, h, o, ok := imageHeaderSize("heic", raw)
+		if !ok || w != 4032 || h != 3024 || o != 6 {
+			t.Fatalf("heic = %d x %d orient %d ok %v", w, h, o, ok)
+		}
+	})
+
+	t.Run("heic irot wins over exif", func(t *testing.T) {
+		raw := testHEIC(heicProps{primaryW: 4032, primaryH: 3024, primaryRot: 1, exifOrient: 6})
+		_, _, o, ok := imageHeaderSize("heic", raw)
+		if !ok || o != 8 {
+			t.Fatalf("orientation = %d ok %v, want irot 8 rather than EXIF 6", o, ok)
+		}
+	})
+
+	t.Run("truncated", func(t *testing.T) {
+		if _, _, _, ok := imageHeaderSize("jpeg", []byte{0xFF, 0xD8, 0xFF}); ok {
+			t.Fatal("a truncated JPEG reported a size")
+		}
+		if _, _, _, ok := imageHeaderSize("png", []byte("not a png")); ok {
+			t.Fatal("a non-PNG reported a size")
+		}
+	})
+}
+
+type heicProps struct {
+	primaryW, primaryH uint32
+	primaryRot         byte
+	otherW, otherH     uint32
+	exifOrient         uint16
+}
+
+func testHEIC(p heicProps) []byte {
+	props := [][]byte{ispeBox(p.primaryW, p.primaryH), irotBox(p.primaryRot)}
+	assocCount := byte(2)
+	indexes := []byte{1, 2}
+	if p.otherW > 0 {
+		props = append(props, ispeBox(p.otherW, p.otherH))
+	}
+	ipco := bmffBox("ipco", bytes.Join(props, nil))
+	ipmaBody := []byte{
+		0, 0, 0, 0,
+		0, 0, 0, 1,
+		0, 1,
+		assocCount,
+	}
+	ipmaBody = append(ipmaBody, indexes...)
+	iprp := bmffBox("iprp", append(ipco, bmffBox("ipma", ipmaBody)...))
+	meta := bmffFullBox("meta", append(bmffFullBox("pitm", []byte{0, 1}), iprp...))
+	out := append(bmffBox("ftyp", []byte("heic")), meta...)
+	if p.exifOrient != 0 {
+		raw := testExif()
+		binary.LittleEndian.PutUint16(raw[18:], p.exifOrient)
+		out = append(out, exifAPP1Prefix...)
+		out = append(out, raw...)
+	}
+	return out
+}
+
+func bmffBox(typ string, payload []byte) []byte {
+	out := make([]byte, 8+len(payload))
+	binary.BigEndian.PutUint32(out[:4], uint32(len(out)))
+	copy(out[4:8], typ)
+	copy(out[8:], payload)
+	return out
+}
+
+func bmffFullBox(typ string, body []byte) []byte {
+	payload := make([]byte, 4+len(body))
+	copy(payload[4:], body)
+	return bmffBox(typ, payload)
+}
+
+func ispeBox(w, h uint32) []byte {
+	body := make([]byte, 8)
+	binary.BigEndian.PutUint32(body[0:4], w)
+	binary.BigEndian.PutUint32(body[4:8], h)
+	return bmffFullBox("ispe", body)
+}
+
+func irotBox(rot byte) []byte {
+	return bmffFullBox("irot", []byte{rot})
+}
+
+func tiffHeader(order binary.ByteOrder, w, h int, orientation uint16) []byte {
+	raw := make([]byte, 8+2+3*12+4)
+	if order == binary.BigEndian {
+		raw[0], raw[1] = 'M', 'M'
+	} else {
+		raw[0], raw[1] = 'I', 'I'
+	}
+	order.PutUint16(raw[2:4], 42)
+	order.PutUint32(raw[4:8], 8)
+	order.PutUint16(raw[8:10], 3)
+	putTIFFEntry(raw, order, 10, 0x0100, 4, uint32(w))
+	putTIFFEntry(raw, order, 22, 0x0101, 4, uint32(h))
+	putTIFFEntry(raw, order, 34, 0x0112, 3, uint32(orientation))
+	return raw
+}
+
+func tiffSubIFD(w, h int, orientation uint16) []byte {
+	const sub = 26
+	raw := make([]byte, sub+2+3*12+4)
+	raw[0], raw[1] = 'I', 'I'
+	binary.LittleEndian.PutUint16(raw[2:4], 42)
+	binary.LittleEndian.PutUint32(raw[4:8], 8)
+	binary.LittleEndian.PutUint16(raw[8:10], 1)
+	putTIFFEntry(raw, binary.LittleEndian, 10, 0x014A, 4, sub)
+	binary.LittleEndian.PutUint16(raw[sub:], 3)
+	putTIFFEntry(raw, binary.LittleEndian, sub+2, 0x0100, 4, uint32(w))
+	putTIFFEntry(raw, binary.LittleEndian, sub+14, 0x0101, 4, uint32(h))
+	putTIFFEntry(raw, binary.LittleEndian, sub+26, 0x0112, 3, uint32(orientation))
+	return raw
+}
+
+func putTIFFEntry(raw []byte, order binary.ByteOrder, off int, tag, typ uint16, value uint32) {
+	order.PutUint16(raw[off:], tag)
+	order.PutUint16(raw[off+2:], typ)
+	order.PutUint32(raw[off+4:], 1)
+	if typ == 3 {
+		order.PutUint16(raw[off+8:], uint16(value))
+		return
+	}
+	order.PutUint32(raw[off+8:], value)
+}
+
+func pngWithOrientation(t *testing.T, w, h int, orientation uint16) []byte {
+	t.Helper()
+	raw := pngBytes(t, w, h)
+	if len(raw) < 12 {
+		t.Fatal("png is shorter than an IEND chunk")
+	}
+	exif := testExif()
+	binary.LittleEndian.PutUint16(exif[18:], orientation)
+	chunk := make([]byte, 12+len(exif))
+	binary.BigEndian.PutUint32(chunk[0:4], uint32(len(exif)))
+	copy(chunk[4:8], "eXIf")
+	copy(chunk[8:], exif)
+	iendAt := len(raw) - 12
+	out := make([]byte, 0, len(raw)+len(chunk))
+	out = append(out, raw[:iendAt]...)
+	out = append(out, chunk...)
+	out = append(out, raw[iendAt:]...)
+	return out
 }

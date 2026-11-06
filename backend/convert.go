@@ -214,6 +214,80 @@ func rotateCounterClockwise(src image.Image, turns int) *image.RGBA {
 	return dst
 }
 
+// applyExifOrientation turns stored pixels into the orientation a viewer
+// should show. 1 and any unknown value leave the image unchanged.
+// 6 is 90 degrees clockwise, 8 is 270 degrees clockwise, and 3 is 180.
+func applyExifOrientation(src image.Image, orientation int) image.Image {
+	switch orientation {
+	case 2:
+		return flipHorizontal(src)
+	case 3:
+		return rotateCounterClockwise(src, 2)
+	case 4:
+		return flipVertical(src)
+	case 5:
+		return transpose(src)
+	case 6:
+		return rotateCounterClockwise(src, 3)
+	case 7:
+		return transverse(src)
+	case 8:
+		return rotateCounterClockwise(src, 1)
+	default:
+		return src
+	}
+}
+
+func flipHorizontal(src image.Image) *image.RGBA {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dst.Set(x, y, src.At(b.Min.X+w-1-x, b.Min.Y+y))
+		}
+	}
+	return dst
+}
+
+func flipVertical(src image.Image) *image.RGBA {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dst.Set(x, y, src.At(b.Min.X+x, b.Min.Y+h-1-y))
+		}
+	}
+	return dst
+}
+
+// transpose maps stored (x, y) onto visual (y, x). That is EXIF orientation 5.
+func transpose(src image.Image) *image.RGBA {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, h, w))
+	for y := 0; y < w; y++ {
+		for x := 0; x < h; x++ {
+			dst.Set(x, y, src.At(b.Min.X+y, b.Min.Y+x))
+		}
+	}
+	return dst
+}
+
+// transverse is EXIF orientation 7: the stored top row is the visual right side.
+func transverse(src image.Image) *image.RGBA {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, h, w))
+	for y := 0; y < w; y++ {
+		for x := 0; x < h; x++ {
+			dst.Set(x, y, src.At(b.Min.X+w-1-y, b.Min.Y+h-1-x))
+		}
+	}
+	return dst
+}
+
 // copyFile copies src to dst, replacing dst.
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)

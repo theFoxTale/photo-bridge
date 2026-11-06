@@ -2,7 +2,9 @@ package backend
 
 import (
 	"context"
+	"encoding/base64"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -74,6 +76,34 @@ func TestPhotoPreviewFitsJPEGAndRemovesTempFile(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("preview wrote %d cache entries, want none", len(entries))
+	}
+}
+
+func TestPhotoPreviewRotatesExifOrientation(t *testing.T) {
+	payload := orientedJPEG(t, 2000, 1000, 6, nil)
+	download := func(_ context.Context, dest string) error {
+		return os.WriteFile(dest, payload, 0o644)
+	}
+	url, err := PhotoPreview(context.Background(), "device-1", "100APPLE/IMG_0001.JPG", download, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := decodeJPEGDataURL(t, url)
+	b := img.Bounds()
+	if b.Dx() != 540 || b.Dy() != 1080 {
+		t.Fatalf("preview = %d x %d, want 540 x 1080", b.Dx(), b.Dy())
+	}
+	const prefix = "data:image/jpeg;base64,"
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(url, prefix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := jpegExif(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if block != nil {
+		t.Fatal("preview JPEG still carries an EXIF orientation tag")
 	}
 }
 
