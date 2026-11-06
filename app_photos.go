@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -70,4 +71,28 @@ func (a *App) FetchThumbnail(deviceID, photoID string) (string, error) {
 		return "", fmt.Errorf("fetch thumbnail: %w", err)
 	}
 	return thumb, nil
+}
+
+// GetPhotoPreview returns a base64 JPEG data URL fitted inside 1920x1080.
+// The preview is not cached. Videos return the existing 400px thumbnail.
+func (a *App) GetPhotoPreview(deviceID, photoID string) (string, error) {
+	if err := requireID("deviceID", deviceID); err != nil {
+		return "", err
+	}
+	if err := requireID("photoID", photoID); err != nil {
+		return "", err
+	}
+	ctx := a.runtimeContext()
+	preview, err := backend.PhotoPreview(ctx, deviceID, photoID,
+		func(ctx context.Context, destPath string) error {
+			return a.library.Download(ctx, deviceID, photoID, destPath, nil)
+		},
+		func(ctx context.Context) (string, error) {
+			return a.library.Thumbnail(ctx, deviceID, photoID)
+		},
+	)
+	if err != nil {
+		return "", fmt.Errorf("photo preview: %w", err)
+	}
+	return preview, nil
 }

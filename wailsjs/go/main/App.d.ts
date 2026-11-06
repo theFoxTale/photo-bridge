@@ -22,6 +22,8 @@ export function FetchThumbnail(arg1:string,arg2:string):Promise<string>;
 
 export function GetCacheStats():Promise<Record<string, any>>;
 
+export function GetPhotoPreview(arg1:string,arg2:string):Promise<string>;
+
 export function GetStorageInfo(arg1:string,arg2:string):Promise<backend.StorageInfo>;
 
 export function LibraryMode():Promise<string>;

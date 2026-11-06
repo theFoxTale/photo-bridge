@@ -25,6 +25,8 @@ declare global {
           FetchAlbums(deviceId: string): Promise<Album[]>
           FetchPhotos(deviceId: string, albumId: string): Promise<Photo[]>
           FetchThumbnail(deviceId: string, photoId: string): Promise<string>
+          /** JPEG data URL fitted inside 1920x1080. Videos return the 400px thumbnail. */
+          GetPhotoPreview(deviceId: string, photoId: string): Promise<string>
           /** Resolves to an empty string when the user cancels the dialog. */
           SelectFolder(): Promise<string>
           TransferPhotos(

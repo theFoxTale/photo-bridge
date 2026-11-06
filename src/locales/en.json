@@ -157,6 +157,13 @@
     "cancel": "Cancel",
     "cancelling": "Cancelling…"
   },
+  "lightbox": {
+    "loading": "Loading...",
+    "close": "Close",
+    "previous": "Previous photo",
+    "next": "Next photo",
+    "failed": "Could not load this photo."
+  },
   "bottom": {
     "pcFree": "PC: {size} free",
     "iphoneFree": "iPhone: {size} free"
@@ -230,6 +237,7 @@
     "ffmpegMissing": "ffmpeg is not available: {detail}",
     "convertDng": "Could not convert DNG to JPG: {detail}",
     "previewUnavailable": "Preview is not available for {detail}",
+    "photoPreview": "Could not load the preview: {detail}",
     "fileUnavailable": "{detail} is not available on the device.",
     "chooseCacheFolder": "Choose a cache folder.",
     "windowNotReady": "The application window is not ready yet.",

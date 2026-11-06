@@ -42,6 +42,10 @@ export function GetCacheStats() {
   return window['go']['main']['App']['GetCacheStats']();
 }
 
+export function GetPhotoPreview(arg1, arg2) {
+  return window['go']['main']['App']['GetPhotoPreview'](arg1, arg2);
+}
+
 export function GetStorageInfo(arg1, arg2) {
   return window['go']['main']['App']['GetStorageInfo'](arg1, arg2);
 }

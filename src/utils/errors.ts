@@ -59,6 +59,7 @@ const PREFIXES: readonly { prefix: string; key: string }[] = [
   { prefix: 'save Live Photo video: ', key: 'errors.saveLiveVideo' },
   { prefix: 'ffmpeg not available: ', key: 'errors.ffmpegMissing' },
   { prefix: 'convert DNG to JPG: ', key: 'errors.convertDng' },
+  { prefix: 'photo preview: ', key: 'errors.photoPreview' },
   { prefix: 'preview not available for ', key: 'errors.previewUnavailable' },
   { prefix: 'save original: ', key: 'errors.saveOriginal' },
   { prefix: 'convert to JPG: ', key: 'errors.convertJpg' },

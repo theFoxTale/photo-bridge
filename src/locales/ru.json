@@ -157,6 +157,13 @@
     "cancel": "Отмена",
     "cancelling": "Отмена…"
   },
+  "lightbox": {
+    "loading": "Загрузка...",
+    "close": "Закрыть",
+    "previous": "Предыдущее фото",
+    "next": "Следующее фото",
+    "failed": "Не удалось открыть это фото."
+  },
   "bottom": {
     "pcFree": "ПК: {size} свободно",
     "iphoneFree": "iPhone: {size} свободно"
@@ -230,6 +237,7 @@
     "ffmpegMissing": "ffmpeg недоступен: {detail}",
     "convertDng": "Не удалось конвертировать DNG в JPG: {detail}",
     "previewUnavailable": "Превью недоступно для {detail}",
+    "photoPreview": "Не удалось загрузить превью: {detail}",
     "fileUnavailable": "{detail} недоступен на устройстве.",
     "chooseCacheFolder": "Выберите папку кэша.",
     "windowNotReady": "Окно приложения ещё не готово.",

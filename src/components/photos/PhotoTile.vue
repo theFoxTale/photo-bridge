@@ -18,6 +18,8 @@ const emit = defineEmits<{
   select: [mode: 'only' | 'toggle']
   /** The tile scrolled into (or near) the viewport; load its thumbnail. */
   visible: []
+  /** Open this photo in the lightbox. */
+  open: []
 }>()
 
 const { t } = useI18n()
@@ -107,6 +109,7 @@ const showVideoChrome = computed(() => props.photo.isVideo && (props.thumbUrl !=
       :aria-pressed="selected"
       :aria-label="ariaLabel"
       @click="onTileClick"
+      @dblclick.stop="emit('open')"
     >
       <img
         v-if="thumbUrl"

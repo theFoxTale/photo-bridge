@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDeviceDiscovery } from '../../composables/useDeviceDiscovery'
 import { usePhotoLibrary } from '../../composables/usePhotoLibrary'
@@ -8,6 +8,7 @@ import type { MediaFilter } from '../../stores/photoStore'
 import type { Album } from '../../types/album'
 import type { Photo } from '../../types/photo'
 import { translateError } from '../../utils/errors'
+import LightboxModal from './LightboxModal.vue'
 import PhotoTile from './PhotoTile.vue'
 
 const { t, locale } = useI18n()
@@ -90,6 +91,13 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
   } else {
     selectOnly(photoId)
   }
+}
+
+const lightboxIndex = ref<number | null>(null)
+
+function openLightbox(photoId: string): void {
+  const index = filteredPhotos.value.findIndex((photo) => photo.id === photoId)
+  if (index >= 0) lightboxIndex.value = index
 }
 </script>
 
@@ -314,11 +322,19 @@ function onSelect(photoId: string, mode: 'only' | 'toggle'): void {
               :sync-status="store.syncStatusFor(photo.id)"
               @select="onSelect(photo.id, $event)"
               @visible="loadThumbnail(photo.id)"
+              @open="openLightbox(photo.id)"
             />
           </div>
         </section>
       </div>
       </div>
     </div>
+
+    <LightboxModal
+      v-if="lightboxIndex !== null"
+      :photos="filteredPhotos"
+      :initial-index="lightboxIndex"
+      @close="lightboxIndex = null"
+    />
   </section>
 </template>
